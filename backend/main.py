@@ -79,7 +79,9 @@ async def download_clip(req: ClipRequest, work_dir: Path) -> Path:
 
     fmt = (
         f"bestvideo[height<={req.max_height}][ext=mp4]+bestaudio[ext=m4a]/"
-        f"best[height<={req.max_height}][ext=mp4]/best[height<={req.max_height}]"
+        f"bestvideo[height<={req.max_height}]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={req.max_height}]+bestaudio/"
+        f"best[height<={req.max_height}]/best"
     )
     cmd = [
         "yt-dlp",
@@ -88,7 +90,7 @@ async def download_clip(req: ClipRequest, work_dir: Path) -> Path:
         "--format", fmt,
         "--download-sections", f"*{req.start_sec}-{req.end_sec}",
         "--merge-output-format", "mp4",
-        "--postprocessor-args", "ffmpeg:-c copy",
+        "--postprocessor-args", "ffmpeg:-c:v copy -c:a aac",
         "--output", output_template,
         str(req.url),
     ]
@@ -109,7 +111,12 @@ async def download_clip(req: ClipRequest, work_dir: Path) -> Path:
             raise HTTPException(status_code=504, detail="Clip job timed out")
 
         if proc.returncode != 0:
-            err_msg = stderr.decode(errors="ignore").strip().splitlines()[-1:] or ["yt-dlp failed"]
+            full_err = stderr.decode(errors="ignore").strip()
+            import sys
+            print(f"[yt-dlp FAILED] returncode={proc.returncode}\n"
+                  f"  cmd={' '.join(cmd)}\n"
+                  f"  stderr={full_err}", file=sys.stderr)
+            err_msg = full_err.splitlines()[-1:] or ["yt-dlp failed"]
             raise HTTPException(status_code=502, detail=err_msg[0])
 
         files = list(work_dir.glob("clip.*"))
