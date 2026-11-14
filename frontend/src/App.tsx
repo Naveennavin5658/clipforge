@@ -16,7 +16,11 @@ import { generateSyntheticLocalVideo } from './utils/localFfmpeg';
 const DEFAULT_API_BASE =
   (typeof window !== 'undefined' && window.localStorage.getItem('clipforge_api_base')) ||
   import.meta.env.VITE_API_BASE_URL ||
-  'http://localhost:8000';
+  (typeof window !== 'undefined' &&
+  window.location.hostname !== 'localhost' &&
+  window.location.hostname !== '127.0.0.1'
+    ? 'https://clipforge-api-82ak.onrender.com'
+    : 'http://localhost:8000');
 
 export default function App() {
   const [urlInput, setUrlInput] = useState('');

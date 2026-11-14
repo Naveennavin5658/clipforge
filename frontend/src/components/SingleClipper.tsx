@@ -189,8 +189,12 @@ export function SingleClipper({
           headers,
           body: JSON.stringify({
             url: targetUrl,
+            start_sec: rangeCheck.startSec,
+            end_sec: rangeCheck.endSec,
             start_time: rangeCheck.startFormatted,
             end_time: rangeCheck.endFormatted,
+            ...(botBypass.cookiesTxt.trim() ? { cookies_txt: botBypass.cookiesTxt.trim() } : {}),
+            ...(botBypass.poToken.trim() ? { po_token: botBypass.poToken.trim() } : {}),
           }),
         });
 

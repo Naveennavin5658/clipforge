@@ -53,10 +53,35 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 active_jobs = 0
 
 
+def _parse_timecode(val: Any) -> Optional[float]:
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    val_str = str(val).strip()
+    if not val_str:
+        return None
+    try:
+        return float(val_str)
+    except ValueError:
+        pass
+    parts = val_str.split(":")
+    try:
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+        elif len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    except Exception:
+        return None
+    return None
+
+
 class ClipRequest(BaseModel):
     url: str = Field(..., min_length=8, max_length=512)
-    start_sec: float = Field(..., ge=0)
-    end_sec: float = Field(..., gt=0)
+    start_sec: Optional[float] = Field(default=None, ge=0)
+    end_sec: Optional[float] = Field(default=None, gt=0)
+    start_time: Optional[str] = Field(default=None)
+    end_time: Optional[str] = Field(default=None)
     cookies_txt: Optional[str] = Field(default=None, max_length=200_000)
     po_token: Optional[str] = Field(default=None, max_length=2048)
 
@@ -392,7 +417,15 @@ async def _extract_single_to_file(
 @app.post("/clip")
 async def clip_single(req: ClipRequest, background_tasks: BackgroundTasks):
     global active_jobs
-    duration = req.end_sec - req.start_sec
+    start = req.start_sec if req.start_sec is not None else _parse_timecode(req.start_time)
+    if start is None:
+        start = 0.0
+
+    end = req.end_sec if req.end_sec is not None else _parse_timecode(req.end_time)
+    if end is None:
+        end = start + 30.0
+
+    duration = end - start
     if duration <= 0 or duration > MAX_SINGLE_DURATION_SEC:
         raise HTTPException(
             status_code=400,
@@ -416,20 +449,20 @@ async def clip_single(req: ClipRequest, background_tasks: BackgroundTasks):
     active_jobs += 1
     work_dir = tempfile.mkdtemp(prefix="cf_single_")
     vid_id = _extract_youtube_id(req.url) or "video"
-    out_file = os.path.join(work_dir, f"{vid_id}_{int(req.start_sec)}_{int(req.end_sec)}.mp4")
+    out_file = os.path.join(work_dir, f"{vid_id}_{int(start)}_{int(end)}.mp4")
 
     try:
         await _extract_single_to_file(
             req.url,
-            req.start_sec,
-            req.end_sec,
+            start,
+            end,
             out_file,
             req.cookies_txt,
             req.po_token,
         )
         _increment_stats(1, duration)
         background_tasks.add_task(_cleanup_dir, work_dir)
-        cache_key = f"{vid_id}:{int(req.start_sec)}:{int(req.end_sec)}"
+        cache_key = f"{vid_id}:{int(start)}:{int(end)}"
         return FileResponse(
             out_file,
             media_type="video/mp4",
