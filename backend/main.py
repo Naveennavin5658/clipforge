@@ -122,12 +122,14 @@ def _classify_yt_dlp_error(stderr: str) -> tuple[int, dict]:
             "po token",
             "cookies are required",
             "use --cookies",
+            "failed to extract any player response",
+            "player response",
         )
     ):
         return 403, {
             "code": "YT_BOT_CHECK",
-            "message": "YouTube flagged this datacenter request for bot verification (HTTP 403).",
-            "hint": "Expand Bot-Check Bypass in the UI and attach Netscape cookies.txt or a PO Token from your browser session.",
+            "message": "YouTube flagged this cloud server request (Bot Check / Player Response blocked).",
+            "hint": "YouTube blocks cloud datacenters. Expand 'Age-Restricted or Protected Video' below and attach cookies.txt, or trim a local video directly in your browser.",
             "needs_bot_bypass": True,
         }
 
@@ -235,7 +237,9 @@ def _build_yt_dlp_base_args(cookie_path: Optional[str], po_token: Optional[str])
         "--socket-timeout",
         "20",
         "--retries",
-        "2",
+        "3",
+        "--extractor-args",
+        "youtube:player_client=mweb,android,ios",
     ])
     if cookie_path:
         args.extend(["--cookies", cookie_path])
@@ -333,6 +337,8 @@ async def playlist_meta(
                 "--playlist-end",
                 str(MAX_PLAYLIST_ITEMS),
                 "--no-warnings",
+                "--extractor-args",
+                "youtube:player_client=mweb,android,ios",
             ])
             if cookie_path:
                 args.extend(["--cookies", cookie_path])
