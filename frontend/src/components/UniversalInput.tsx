@@ -63,15 +63,15 @@ export function UniversalInput({
     <section aria-label="Choose video source" className="space-y-4">
       {/* Tab Switcher */}
       <div className="flex items-center justify-center gap-2">
-        <div className="inline-flex rounded-2xl bg-[#141724] border border-[#23283c] p-1.5 shadow-inner">
+        <div className="inline-flex rounded-2xl bg-slate-100/90 dark:bg-[#141724] border border-slate-200/90 dark:border-[#23283c] p-1.5 shadow-inner transition-colors duration-150">
           <button
             type="button"
             onClick={() => {
               setActiveTab('link');
               if (localFileName) onClear();
             }}
-            className={`relative flex items-center gap-2 rounded-xl px-5 py-2 text-xs sm:text-sm font-semibold transition-colors ${
-              activeTab === 'link' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+            className={`relative flex items-center gap-2 rounded-xl px-5 py-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+              activeTab === 'link' ? 'text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200'
             }`}
           >
             {activeTab === 'link' && (
@@ -93,8 +93,8 @@ export function UniversalInput({
               setActiveTab('file');
               if (urlValue) onClear();
             }}
-            className={`relative flex items-center gap-2 rounded-xl px-5 py-2 text-xs sm:text-sm font-semibold transition-colors ${
-              activeTab === 'file' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+            className={`relative flex items-center gap-2 rounded-xl px-5 py-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+              activeTab === 'file' ? 'text-white' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200'
             }`}
           >
             {activeTab === 'file' && (
@@ -120,10 +120,10 @@ export function UniversalInput({
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
-        className={`relative overflow-hidden rounded-3xl border bg-[#11131e] p-5 sm:p-7 shadow-2xl transition-all duration-200 ${
+        className={`relative overflow-hidden rounded-3xl border bg-white dark:bg-[#11131e] p-5 sm:p-7 shadow-lg shadow-slate-100 dark:shadow-2xl transition-all duration-200 ${
           dragging
-            ? 'border-orange-500 ring-4 ring-orange-500/20 bg-orange-950/20'
-            : 'border-[#22283d] hover:border-[#2f3652]'
+            ? 'border-orange-500 ring-4 ring-orange-500/20 bg-orange-50/50 dark:bg-orange-950/20'
+            : 'border-slate-200/90 dark:border-[#22283d] hover:border-slate-300 dark:hover:border-[#2f3652]'
         }`}
       >
         <AnimatePresence mode="wait">
@@ -137,7 +137,7 @@ export function UniversalInput({
               className="space-y-4"
             >
               <div className="relative">
-                <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500">
+                <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-zinc-500">
                   <Link2 className="h-5 w-5" />
                 </div>
                 <input
@@ -146,14 +146,14 @@ export function UniversalInput({
                   value={urlValue}
                   onChange={(e) => onUrlChange(e.target.value)}
                   placeholder="Paste YouTube link (video, Shorts, or full playlist)..."
-                  className="w-full rounded-2xl border border-[#2a3047] bg-[#0c0d16] py-4 pl-12 pr-24 text-sm sm:text-base font-medium text-white placeholder:text-zinc-500 transition-all focus:border-orange-500 focus:bg-black focus:outline-none focus:ring-4 focus:ring-orange-500/15"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-[#2a3047] bg-slate-50 dark:bg-[#0c0d16] py-4 pl-12 pr-24 text-sm sm:text-base font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 transition-all focus:border-orange-500 focus:bg-white dark:focus:bg-black focus:outline-none focus:ring-4 focus:ring-orange-500/15 shadow-inner"
                 />
                 {urlValue ? (
                   <button
                     type="button"
                     onClick={onClear}
                     aria-label="Clear link"
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-400 dark:text-zinc-400 hover:bg-slate-200 dark:hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -161,9 +161,9 @@ export function UniversalInput({
                   <button
                     type="button"
                     onClick={handlePasteFromClipboard}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-xl bg-[#1c2133] hover:bg-[#262c45] border border-zinc-700/60 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition-colors shadow-sm"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1c2133] dark:hover:bg-[#262c45] border border-slate-200 dark:border-zinc-700/60 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   >
-                    <Clipboard className="h-3.5 w-3.5 text-orange-400" />
+                    <Clipboard className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
                     Paste Link
                   </button>
                 )}
@@ -173,40 +173,40 @@ export function UniversalInput({
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div>
                   {isYoutube && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 font-semibold text-emerald-400">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 font-semibold text-emerald-600 dark:text-emerald-400">
                       <CheckCircle2 className="h-3.5 w-3.5" />
                       YouTube video ready for cutting
                     </span>
                   )}
                   {isPlaylist && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/10 border border-purple-500/30 px-3 py-1 font-semibold text-purple-400">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/10 border border-purple-500/30 px-3 py-1 font-semibold text-purple-600 dark:text-purple-400">
                       <ListVideo className="h-3.5 w-3.5" />
                       Playlist detected — batch selection active
                     </span>
                   )}
                   {detectedMode === 'invalid' && validationError && (
-                    <span className="font-semibold text-rose-400">{validationError}</span>
+                    <span className="font-semibold text-rose-500 dark:text-rose-400">{validationError}</span>
                   )}
                   {detectedMode === 'empty' && (
-                    <span className="text-zinc-500 font-mono text-[11px]">
+                    <span className="text-slate-500 dark:text-zinc-500 font-mono text-[11px]">
                       READY TO EXTRACT PRECISE SECTIONS
                     </span>
                   )}
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="text-zinc-500 font-medium hidden sm:inline">Try examples:</span>
+                  <span className="text-slate-500 dark:text-zinc-500 font-medium hidden sm:inline">Try examples:</span>
                   <button
                     type="button"
                     onClick={onLoadSampleYoutube}
-                    className="rounded-full bg-[#181c2e] hover:bg-orange-500/20 hover:text-orange-300 border border-[#2b324d] px-3 py-1 text-zinc-300 font-medium transition-colors"
+                    className="rounded-full bg-slate-100 hover:bg-orange-50 hover:text-orange-700 dark:bg-[#181c2e] dark:hover:bg-orange-500/20 dark:hover:text-orange-300 border border-slate-200 dark:border-[#2b324d] px-3 py-1 text-slate-700 dark:text-zinc-300 font-medium transition-colors cursor-pointer"
                   >
                     🐱 Fun 19s Video
                   </button>
                   <button
                     type="button"
                     onClick={onLoadSamplePlaylist}
-                    className="rounded-full bg-[#181c2e] hover:bg-purple-500/20 hover:text-purple-300 border border-[#2b324d] px-3 py-1 text-zinc-300 font-medium transition-colors"
+                    className="rounded-full bg-slate-100 hover:bg-purple-50 hover:text-purple-700 dark:bg-[#181c2e] dark:hover:bg-purple-500/20 dark:hover:text-purple-300 border border-slate-200 dark:border-[#2b324d] px-3 py-1 text-slate-700 dark:text-zinc-300 font-medium transition-colors cursor-pointer"
                   >
                     🎵 Chill Playlist
                   </button>
@@ -242,10 +242,10 @@ export function UniversalInput({
                       <Film className="h-6 w-6" />
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-white truncate max-w-xs sm:max-w-md">
+                      <p className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-xs sm:max-w-md">
                         {localFileName}
                       </p>
-                      <p className="text-xs text-blue-300 font-medium">
+                      <p className="text-xs text-blue-600 dark:text-blue-300 font-medium">
                         Local video loaded • 100% private offline trimming
                       </p>
                     </div>
@@ -254,7 +254,7 @@ export function UniversalInput({
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="rounded-xl border border-zinc-700 bg-[#1c2133] px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-[#252c45] transition-colors"
+                      className="rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-[#1c2133] px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-[#252c45] transition-colors cursor-pointer"
                     >
                       Change file
                     </button>
@@ -262,7 +262,7 @@ export function UniversalInput({
                       type="button"
                       onClick={onClear}
                       aria-label="Remove file"
-                      className="rounded-full p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+                      className="rounded-full p-1.5 text-slate-400 dark:text-zinc-400 hover:bg-slate-200 dark:hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -271,33 +271,33 @@ export function UniversalInput({
               ) : (
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#2b334d] hover:border-blue-400/80 bg-[#0d0f19] hover:bg-blue-950/15 px-6 py-9 text-center cursor-pointer transition-all"
+                  className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 dark:border-[#2b334d] hover:border-blue-500 bg-slate-50/70 hover:bg-blue-50/50 dark:bg-[#0d0f19] dark:hover:bg-blue-950/15 px-6 py-9 text-center cursor-pointer transition-all"
                 >
                   <motion.div
                     whileHover={{ scale: 1.1, y: -2 }}
-                    className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-colors shadow-sm mb-3"
+                    className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-colors shadow-xs mb-3"
                   >
                     <Upload className="h-6 w-6" />
                   </motion.div>
-                  <p className="text-sm sm:text-base font-bold text-white">
+                  <p className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
                     Drop your video here, or click to browse files
                   </p>
-                  <p className="text-xs text-zinc-400 mt-1 max-w-sm">
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 max-w-sm">
                     Supports MP4, MOV, WebM, and MKV. Runs locally in your browser — your file never leaves your machine.
                   </p>
                 </div>
               )}
 
               {/* Sample Generator for Offline Mode */}
-              <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-t border-[#1e2338] pt-3">
-                <span className="text-zinc-400 font-mono text-[11px]">
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-t border-slate-200 dark:border-[#1e2338] pt-3">
+                <span className="text-slate-500 dark:text-zinc-400 font-mono text-[11px]">
                   🔒 OFFLINE WASM ENGINE ACTIVE
                 </span>
                 <button
                   type="button"
                   disabled={generatingSample}
                   onClick={onGenerateLocalSample}
-                  className="inline-flex items-center gap-1.5 font-semibold text-blue-400 hover:text-blue-300 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 disabled:opacity-50 cursor-pointer"
                 >
                   <Sparkles className="h-3.5 w-3.5" />
                   {generatingSample ? 'Forging test video...' : 'Generate 5s Sample Test Video'}

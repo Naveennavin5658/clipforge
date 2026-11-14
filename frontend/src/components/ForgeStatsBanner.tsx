@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Flame, Clock, Sparkles, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -34,7 +34,6 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
 
   const [showCelebration, setShowCelebration] = useState(false);
 
-  // Fetch live stats from backend
   useEffect(() => {
     let active = true;
     const fetchStats = async () => {
@@ -64,7 +63,6 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
     };
   }, [apiBaseUrl]);
 
-  // Handle celebration trigger when a new clip is forged by user
   useEffect(() => {
     if (!triggerCelebration) return;
     setTotalClips((prev) => {
@@ -97,14 +95,14 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
         : `${(secondsSaved / 3600).toFixed(1)} hrs`;
 
   return (
-    <div className="relative z-30 border-b border-[#252b42] bg-gradient-to-r from-[#0c0d16] via-[#151829] to-[#0c0d16] py-2 px-4 text-white overflow-hidden shadow-md">
+    <div className="relative z-30 border-b border-orange-200/90 dark:border-[#252b42] bg-gradient-to-r from-orange-50/90 via-amber-50/60 to-orange-50/90 dark:from-[#0c0d16] dark:via-[#151829] dark:to-[#0c0d16] py-2 px-4 text-slate-800 dark:text-white overflow-hidden shadow-xs dark:shadow-md transition-colors duration-150">
       {/* Subtle ember glow behind banner */}
-      <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-rose-500/15 to-amber-500/10 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-amber-500/5 to-rose-500/10 pointer-events-none" />
 
-      <div className="relative mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 text-xs">
-        {/* Left Side: Live Forge Badge */}
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 text-xs">
+        {/* Left Side: Live Badge + Worldwide Note */}
         <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-1.5 rounded-full bg-orange-500/15 border border-orange-500/30 px-2.5 py-0.5 font-mono text-[10px] font-bold text-orange-400">
+          <div className="flex items-center gap-1.5 rounded-full bg-orange-500/10 dark:bg-orange-500/15 border border-orange-500/30 px-2.5 py-0.5 font-mono text-[10px] font-bold text-orange-700 dark:text-orange-400 tracking-wider">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500" />
@@ -112,70 +110,69 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
             <span>LIVE FORGE TICKER</span>
           </div>
 
-          <span className="text-zinc-400 text-[11px] hidden sm:inline">
+          <span className="text-slate-600 dark:text-zinc-400 text-[11px] hidden sm:inline">
             Real clips created by users in real time
           </span>
         </div>
 
-        {/* Center: The Flex Counter */}
-        <div className="flex items-center gap-3 font-mono">
+        {/* Center: Live Odometer Counter */}
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <Flame className="h-4 w-4 text-orange-400 fill-orange-500/20 animate-bounce" />
-            <span className="text-zinc-300 font-sans font-medium text-xs hidden xs:inline">
+            <Flame className="h-4 w-4 text-orange-500 dark:text-orange-400 fill-orange-500/20 animate-bounce" />
+            <span className="text-slate-700 dark:text-zinc-300 font-sans font-medium text-xs hidden xs:inline">
               {totalClips === 1 ? 'Video Forged:' : 'Videos Forged:'}
             </span>
 
             {/* Animated Digit Odometer */}
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-0.5 font-mono font-black text-sm tracking-tight">
               {formattedClips.split('').map((char, index) => (
-                <span
+                <div
                   key={index}
-                  className={`inline-flex items-center justify-center font-bold text-sm ${
-                    char === ','
-                      ? 'text-orange-400 px-0.5'
-                      : 'min-w-[20px] h-6 rounded-md bg-[#1f243b] border border-orange-500/30 text-white shadow-xs'
-                  }`}
+                  className="relative flex h-6 w-4 sm:h-7 sm:w-5 items-center justify-center rounded-md bg-white dark:bg-[#1f2438] border border-orange-300/80 dark:border-orange-500/30 text-orange-600 dark:text-orange-400 shadow-xs"
                 >
-                  <motion.span
-                    key={`${index}-${char}`}
-                    initial={{ y: -8, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                  >
-                    {char}
-                  </motion.span>
-                </span>
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span
+                      key={`${index}-${char}`}
+                      initial={{ y: -12, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      exit={{ y: 12, opacity: 0 }}
+                      transition={{ duration: 0.22, ease: 'easeOut' }}
+                      className="absolute"
+                    >
+                      {char}
+                    </motion.span>
+                  </AnimatePresence>
+                </div>
               ))}
             </div>
           </div>
 
-          <span className="text-zinc-600">/</span>
-
-          {/* Time Saved Stat */}
-          <div className="flex items-center gap-1.5 text-zinc-400 text-[11px]">
-            <Clock className="h-3.5 w-3.5 text-amber-400" />
+          {/* Time Saved Flex Counter */}
+          <div className="hidden lg:flex items-center gap-1.5 text-slate-600 dark:text-zinc-400 text-[11px]">
+            <Clock className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400" />
             <span>
-              <strong className="text-zinc-200">{formattedSavedTime}</strong> saved from full video downloads
+              <strong className="text-slate-900 dark:text-zinc-200">{formattedSavedTime}</strong> saved from full video downloads
             </span>
           </div>
         </div>
 
-        {/* Right Side: Quick Action or Spark Celebration */}
+        {/* Right Side: Flex Celebration Spark or Genuine badge */}
         <div className="flex items-center gap-2">
-          <AnimatePresence>
+          <AnimatePresence mode="wait">
             {showCelebration ? (
               <motion.div
-                initial={{ scale: 0.8, opacity: 0, x: 20 }}
-                animate={{ scale: 1, opacity: 1, x: 0 }}
+                key="celebration"
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.8, opacity: 0 }}
-                className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 px-3 py-1 font-sans text-xs font-extrabold text-white shadow-lg shadow-orange-500/30"
+                className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-orange-600 to-rose-600 px-3 py-1 font-bold text-white shadow-lg shadow-orange-500/30 text-[11px] animate-pulse"
               >
-                <Sparkles className="h-3.5 w-3.5 animate-spin" />
+                <Sparkles className="h-3.5 w-3.5" />
                 <span>+1 Clip Forged! 🔥</span>
               </motion.div>
             ) : (
-              <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
-                <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+              <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono text-slate-600 dark:text-zinc-400">
+                <TrendingUp className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 <span>100% genuine stats</span>
               </div>
             )}

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
@@ -7,6 +9,24 @@
 }
 
 @layer base {
+  :root {
+    color-scheme: light dark;
+
+    &:has(> head > meta[name="color-scheme"][content="dark"]) {
+      color-scheme: dark;
+    }
+    &:has(> head > meta[name="color-scheme"][content="light"]) {
+      color-scheme: light;
+    }
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+  html.light {
+    color-scheme: light;
+  }
+
   html {
     font-family: var(--font-sans);
     scroll-behavior: smooth;

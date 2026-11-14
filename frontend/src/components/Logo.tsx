@@ -98,29 +98,28 @@ export function Logo({ size = 'md', withText = true, animated = true }: LogoProp
           />
 
           {/* Hot Spark Pivot */}
-          <circle cx="60" cy="60" r="7" fill="#FFA800" opacity="0.9" />
-          <circle cx="60" cy="60" r="4" fill="#FFFBEB" />
+          <circle cx="60" cy="60" r="5" fill="#FFA800" />
+          <circle cx="60" cy="60" r="2.5" fill="#FFFFFF" />
 
-          {/* Embers */}
-          <circle cx="75" cy="48" r="1.6" fill="#FF8A00" />
-          <circle cx="45" cy="72" r="1.4" fill="#FFA800" />
-          <circle cx="70" cy="74" r="1.2" fill="#FF385C" />
+          {/* Ember Particles */}
+          <circle cx="58" cy="46" r="1.5" fill="#FF8400" />
+          <circle cx="68" cy="52" r="1.2" fill="#FFA800" />
+          <circle cx="50" cy="56" r="1" fill="#FF385C" />
         </svg>
       </motion.div>
 
       {withText && (
         <div className="flex flex-col">
-          <div className="flex items-center gap-1.5">
-            <span className="font-display text-xl font-black tracking-tight text-white">
-              Clip<span className="bg-gradient-to-r from-orange-400 via-rose-400 to-amber-300 bg-clip-text text-transparent">Forge</span>
+          <span className="font-display font-extrabold tracking-tight text-slate-900 dark:text-white leading-none">
+            <span className="text-xl sm:text-2xl bg-gradient-to-r from-slate-950 via-slate-800 to-slate-700 dark:from-white dark:via-zinc-100 dark:to-zinc-400 bg-clip-text text-transparent">
+              Clip
             </span>
-            <span className="flex items-center gap-1 rounded-md bg-orange-500/15 border border-orange-500/30 px-1.5 py-0.5 text-[10px] font-mono font-bold text-orange-400 uppercase tracking-wider">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-orange-400 animate-pulse" />
-              PRO
+            <span className="text-xl sm:text-2xl bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 dark:from-rose-500 dark:via-orange-400 dark:to-amber-300 bg-clip-text text-transparent ml-0.5">
+              Forge
             </span>
-          </div>
-          <span className="text-[11px] font-medium text-zinc-400 tracking-wide">
-            Precision Video Cutter
+          </span>
+          <span className="text-[10px] font-mono tracking-widest text-slate-500 dark:text-zinc-400 uppercase font-semibold mt-0.5">
+            Cinematic Clipper
           </span>
         </div>
       )}

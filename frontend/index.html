@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>ClipForge — Precision Video &amp; Playlist Clipper</title>
     <meta
       name="description"
@@ -22,8 +23,25 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap"
       rel="stylesheet"
     />
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('clipforge_theme') || 'dark';
+          var isDark = saved === 'dark' || (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.classList.remove('light');
+          } else {
+            document.documentElement.classList.add('light');
+            document.documentElement.classList.remove('dark');
+          }
+          var meta = document.querySelector('meta[name="color-scheme"]');
+          if (meta) meta.content = saved === 'system' ? 'light dark' : saved;
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body class="bg-[#0b0c13] text-zinc-100 antialiased selection:bg-rose-500 selection:text-white">
+  <body class="bg-slate-50 text-slate-900 dark:bg-[#0b0c13] dark:text-zinc-100 antialiased selection:bg-rose-500 selection:text-white transition-colors duration-150">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

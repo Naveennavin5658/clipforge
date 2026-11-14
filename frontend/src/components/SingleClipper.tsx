@@ -2,15 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   Scissors,
-  Sparkles,
-  Clock,
   CheckCircle2,
   AlertCircle,
-  HelpCircle,
-  Play,
   Film,
-  Zap,
-  RotateCcw,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
@@ -98,105 +92,116 @@ export function SingleClipper({
       setStartSec(next);
     } else {
       const next = Math.max(startSec + 1, endSec + delta);
-      setEndSec(next);
+      if (maxCap && next - startSec > maxCap) {
+        setEndSec(startSec + maxCap);
+      } else {
+        setEndSec(next);
+      }
     }
-  };
-
-  const setPresetDuration = (duration: number) => {
-    setEndSec(startSec + duration);
   };
 
   const pinCurrentTime = (target: 'start' | 'end') => {
-    let current = playheadSec;
-    if (videoRef.current) {
-      current = Math.floor(videoRef.current.currentTime);
-    }
+    if (!videoRef.current) return;
+    const current = Math.floor(videoRef.current.currentTime);
     if (target === 'start') {
-      setStartSec(current);
-      if (endSec <= current) setEndSec(current + 15);
+      if (current < endSec) setStartSec(current);
     } else {
-      setEndSec(Math.max(current, startSec + 1));
+      if (current > startSec) {
+        if (maxCap && current - startSec > maxCap) {
+          setEndSec(startSec + maxCap);
+        } else {
+          setEndSec(current);
+        }
+      }
     }
+  };
+
+  const setPresetDuration = (seconds: number) => {
+    const capped = maxCap ? Math.min(seconds, maxCap) : seconds;
+    setEndSec(startSec + capped);
   };
 
   const handleExtract = async () => {
     if (!rangeCheck.valid) return;
-    setApiError(null);
+    setBusy(true);
     setStatusMsg(null);
-    setLastClipUrl(null);
+    setApiError(null);
 
-    if (mode === 'local' && localFile) {
-      setBusy(true);
+    if (mode === 'local') {
+      if (!localFile) {
+        setBusy(false);
+        return;
+      }
       try {
-        const result = await trimLocalVideoWithWasm({
-          file: localFile,
-          startSec: rangeCheck.startSec,
-          endSec: rangeCheck.endSec,
-          onStatus: (msg) => setStatusMsg(msg),
-        });
-        const downloadUrl = URL.createObjectURL(result.blob);
-        setLastClipUrl({ url: downloadUrl, filename: result.filename });
-        setStatusMsg(`Done! Saved ${formatBytes(result.blob.size)} directly to your device.`);
+        setStatusMsg('Trimming video locally in browser via WebAssembly...');
+        const resultBlob = await trimLocalVideoWithWasm(
+          localFile,
+          rangeCheck.startSec,
+          rangeCheck.endSec,
+          (ratio) => {
+            setStatusMsg(`Trimming locally in browser... ${Math.round(ratio * 100)}%`);
+          },
+        );
+
+        const outName = `${localFile.name.replace(/\.[^/.]+$/, '')}_clip_${Math.floor(rangeCheck.startSec)}-${Math.floor(rangeCheck.endSec)}.mp4`;
+        const downloadUrl = URL.createObjectURL(resultBlob);
+        setLastClipUrl({ url: downloadUrl, filename: outName });
+        setStatusMsg(`Clip Ready (${formatBytes(resultBlob.size)})! Downloading now...`);
         onClipForged?.();
-        const base = apiBaseUrl.trim().replace(/\/+$/, '');
-        if (base) {
-          fetch(`${base}/stats/increment`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ count: 1, duration_sec: Math.max(1, rangeCheck.endSec - rangeCheck.startSec) }),
-          }).catch(() => {});
-        }
-        // Trigger download
+
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = result.filename;
+        a.download = outName;
         a.click();
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Local trimming failed.';
+        setStatusMsg(null);
         setApiError({
-          code: 'SERVER_ERROR',
-          title: 'Could not trim this video',
-          detail: message,
-          suggestion: 'Please verify the video is a standard MP4, MOV, or WebM file.',
-          needsBotBypass: false,
+          title: 'Local Trimming Failed',
+          suggestion:
+            err instanceof Error
+              ? err.message
+              : 'WebAssembly memory or format issue. Try a shorter range.',
+          status: 500,
         });
       } finally {
         setBusy(false);
       }
-      return;
-    }
-
-    if (mode === 'youtube-single' && canonicalUrl) {
+    } else {
       const base = apiBaseUrl.trim().replace(/\/+$/, '');
       if (!base) {
-        setApiError(classifyApiError(0, 'Helper server is offline.'));
+        setApiError(classifyApiError(0, 'Helper server is offline. Please configure server URL.'));
+        setBusy(false);
         return;
       }
 
-      setBusy(true);
-      setStatusMsg('Slicing the exact video section...');
       try {
-        const response = await fetch(`${base}/clip`, {
+        setStatusMsg('Sending clip job to forge worker...');
+        const targetUrl = canonicalUrl || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : '');
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (botBypass.cookiesTxt.trim()) headers['X-YT-Cookies'] = botBypass.cookiesTxt.trim();
+        if (botBypass.poToken.trim()) headers['X-YT-PO-Token'] = botBypass.poToken.trim();
+
+        const res = await fetch(`${base}/clip`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
-            url: canonicalUrl,
-            start_sec: rangeCheck.startSec,
-            end_sec: rangeCheck.endSec,
-            ...(botBypass.cookiesTxt.trim() ? { cookies_txt: botBypass.cookiesTxt.trim() } : {}),
-            ...(botBypass.poToken.trim() ? { po_token: botBypass.poToken.trim() } : {}),
+            url: targetUrl,
+            start_time: rangeCheck.startFormatted,
+            end_time: rangeCheck.endFormatted,
           }),
         });
 
-        if (!response.ok) {
-          const text = await response.text();
-          setApiError(classifyApiError(response.status, text, response.headers.get('Retry-After')));
+        if (!res.ok) {
+          const text = await res.text();
+          setApiError(classifyApiError(res.status, text, res.headers.get('Retry-After')));
           return;
         }
 
-        setStatusMsg('Packaging high-definition MP4...');
-        const blob = await response.blob();
-        const disposition = response.headers.get('Content-Disposition') || '';
+        const blob = await res.blob();
+        const disposition = res.headers.get('Content-Disposition') || '';
         const match = disposition.match(/filename="?([^";]+)"?/);
         const filename = match ? match[1] : `clip_${Math.floor(rangeCheck.startSec)}-${Math.floor(rangeCheck.endSec)}.mp4`;
 
@@ -205,7 +210,6 @@ export function SingleClipper({
         setStatusMsg(`Clip Ready (${formatBytes(blob.size)})! Downloading now...`);
         onClipForged?.();
 
-        // Trigger immediate browser download
         const a = document.createElement('a');
         a.href = downloadUrl;
         a.download = filename;
@@ -222,37 +226,37 @@ export function SingleClipper({
   return (
     <div className="space-y-6">
       {/* Studio Workstation Card */}
-      <div className="rounded-3xl border border-[#23283c] bg-[#121420] p-5 sm:p-7 shadow-2xl space-y-6">
+      <div className="rounded-3xl border border-slate-200/90 dark:border-[#23283c] bg-white dark:bg-[#121422] p-5 sm:p-7 shadow-lg shadow-slate-100 dark:shadow-2xl space-y-6 transition-colors duration-150">
         {/* Top Header inside card */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#202538] pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-[#202538] pb-4">
           <div className="flex items-center gap-2.5">
             <span className="flex h-3 w-3 rounded-full bg-orange-500 animate-pulse shadow-[0_0_8px_#ff6b00]" />
-            <h2 className="font-display text-lg font-bold text-white tracking-wide">
+            <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white tracking-wide">
               {mode === 'local' ? 'Local Studio Player' : 'Live YouTube Cutting Deck'}
             </h2>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-400 font-mono hidden sm:inline">PRESET LENGTHS:</span>
+            <span className="text-xs text-slate-500 dark:text-zinc-400 font-mono hidden sm:inline">PRESET LENGTHS:</span>
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => setPresetDuration(15)}
-                className="rounded-lg bg-[#1a1e30] hover:bg-orange-500/20 hover:text-orange-400 border border-zinc-700/60 px-2.5 py-1 text-xs font-semibold text-zinc-300 transition-colors"
+                className="rounded-lg bg-slate-100 hover:bg-orange-50 hover:text-orange-700 dark:bg-[#1a1e30] dark:hover:bg-orange-500/20 dark:hover:text-orange-400 border border-slate-200 dark:border-zinc-700/60 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-zinc-300 transition-colors cursor-pointer"
               >
                 ⚡ 15s
               </button>
               <button
                 type="button"
                 onClick={() => setPresetDuration(30)}
-                className="rounded-lg bg-[#1a1e30] hover:bg-orange-500/20 hover:text-orange-400 border border-zinc-700/60 px-2.5 py-1 text-xs font-semibold text-zinc-300 transition-colors"
+                className="rounded-lg bg-slate-100 hover:bg-orange-50 hover:text-orange-700 dark:bg-[#1a1e30] dark:hover:bg-orange-500/20 dark:hover:text-orange-400 border border-slate-200 dark:border-zinc-700/60 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-zinc-300 transition-colors cursor-pointer"
               >
                 🔥 30s
               </button>
               <button
                 type="button"
                 onClick={() => setPresetDuration(60)}
-                className="rounded-lg bg-[#1a1e30] hover:bg-orange-500/20 hover:text-orange-400 border border-zinc-700/60 px-2.5 py-1 text-xs font-semibold text-zinc-300 transition-colors"
+                className="rounded-lg bg-slate-100 hover:bg-orange-50 hover:text-orange-700 dark:bg-[#1a1e30] dark:hover:bg-orange-500/20 dark:hover:text-orange-400 border border-slate-200 dark:border-zinc-700/60 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-zinc-300 transition-colors cursor-pointer"
               >
                 🎬 60s
               </button>
@@ -261,7 +265,7 @@ export function SingleClipper({
         </div>
 
         {/* Video Preview Frame */}
-        <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-black aspect-video relative group shadow-inner">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800 bg-black aspect-video relative group shadow-inner">
           {mode === 'local' && localPreviewUrl ? (
             <video
               ref={videoRef}
@@ -286,7 +290,7 @@ export function SingleClipper({
               className="absolute inset-0 h-full w-full border-0"
             />
           ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-zinc-500">
+            <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-400 dark:text-zinc-500">
               <Film className="h-12 w-12 opacity-30" />
               <p className="text-sm font-medium">Load a video above to preview</p>
             </div>
@@ -308,17 +312,17 @@ export function SingleClipper({
         {/* Fine-Tuning Deck (Nudge Buttons & Current Time Pinning) */}
         <div className="grid gap-4 sm:grid-cols-2 pt-2">
           {/* Start Marker Card */}
-          <div className="rounded-2xl border border-[#22283d] bg-[#161a2b] p-4 space-y-2.5">
+          <div className="rounded-2xl border border-slate-200 dark:border-[#22283d] bg-slate-50 dark:bg-[#161a2b] p-4 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 START MOMENT
               </span>
               {mode === 'local' && (
                 <button
                   type="button"
                   onClick={() => pinCurrentTime('start')}
-                  className="text-[11px] font-semibold text-orange-400 hover:text-orange-300 transition-colors"
+                  className="text-[11px] font-semibold text-orange-600 dark:text-orange-400 hover:text-orange-500 transition-colors cursor-pointer"
                 >
                   📍 Pin Current Playhead
                 </button>
@@ -326,14 +330,14 @@ export function SingleClipper({
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex-1 rounded-xl bg-black/50 border border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-white tracking-wider">
+              <div className="flex-1 rounded-xl bg-white dark:bg-black/50 border border-slate-300 dark:border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-slate-900 dark:text-white tracking-wider shadow-inner">
                 {startStr}
               </div>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => adjustTime('start', -5)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move start back 5 seconds"
                 >
                   -5s
@@ -341,7 +345,7 @@ export function SingleClipper({
                 <button
                   type="button"
                   onClick={() => adjustTime('start', -1)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move start back 1 second"
                 >
                   -1s
@@ -349,7 +353,7 @@ export function SingleClipper({
                 <button
                   type="button"
                   onClick={() => adjustTime('start', 1)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move start forward 1 second"
                 >
                   +1s
@@ -357,7 +361,7 @@ export function SingleClipper({
                 <button
                   type="button"
                   onClick={() => adjustTime('start', 5)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move start forward 5 seconds"
                 >
                   +5s
@@ -367,17 +371,17 @@ export function SingleClipper({
           </div>
 
           {/* End Marker Card */}
-          <div className="rounded-2xl border border-[#22283d] bg-[#161a2b] p-4 space-y-2.5">
+          <div className="rounded-2xl border border-slate-200 dark:border-[#22283d] bg-slate-50 dark:bg-[#161a2b] p-4 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-rose-400">
-                <span className="h-2 w-2 rounded-full bg-rose-400" />
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
+                <span className="h-2 w-2 rounded-full bg-rose-500" />
                 END MOMENT
               </span>
               {mode === 'local' && (
                 <button
                   type="button"
                   onClick={() => pinCurrentTime('end')}
-                  className="text-[11px] font-semibold text-orange-400 hover:text-orange-300 transition-colors"
+                  className="text-[11px] font-semibold text-orange-600 dark:text-orange-400 hover:text-orange-500 transition-colors cursor-pointer"
                 >
                   📍 Pin Current Playhead
                 </button>
@@ -385,14 +389,14 @@ export function SingleClipper({
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex-1 rounded-xl bg-black/50 border border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-white tracking-wider">
+              <div className="flex-1 rounded-xl bg-white dark:bg-black/50 border border-slate-300 dark:border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-slate-900 dark:text-white tracking-wider shadow-inner">
                 {endStr}
               </div>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => adjustTime('end', -5)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move end back 5 seconds"
                 >
                   -5s
@@ -400,7 +404,7 @@ export function SingleClipper({
                 <button
                   type="button"
                   onClick={() => adjustTime('end', -1)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move end back 1 second"
                 >
                   -1s
@@ -408,7 +412,7 @@ export function SingleClipper({
                 <button
                   type="button"
                   onClick={() => adjustTime('end', 1)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move end forward 1 second"
                 >
                   +1s
@@ -416,7 +420,7 @@ export function SingleClipper({
                 <button
                   type="button"
                   onClick={() => adjustTime('end', 5)}
-                  className="rounded-lg bg-[#20253a] hover:bg-[#2a314d] border border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-zinc-300 transition-colors"
+                  className="rounded-lg bg-white hover:bg-slate-100 dark:bg-[#20253a] dark:hover:bg-[#2a314d] border border-slate-200 dark:border-zinc-700/60 px-2.5 py-2 text-xs font-mono font-bold text-slate-700 dark:text-zinc-300 transition-colors shadow-xs cursor-pointer"
                   title="Move end forward 5 seconds"
                 >
                   +5s
@@ -431,18 +435,18 @@ export function SingleClipper({
           <motion.div
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 text-xs text-emerald-300"
+            className="flex items-center gap-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 text-xs text-emerald-700 dark:text-emerald-300"
           >
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span className="font-medium">{statusMsg}</span>
           </motion.div>
         )}
 
         {/* Friendly Error Box */}
         {apiError && (
-          <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 space-y-2 text-xs text-rose-200">
-            <div className="flex items-center gap-2 font-bold text-rose-300">
-              <AlertCircle className="h-4 w-4 text-rose-400" />
+          <div className="rounded-2xl border border-rose-300 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 p-4 space-y-2 text-xs text-rose-900 dark:text-rose-200">
+            <div className="flex items-center gap-2 font-bold text-rose-700 dark:text-rose-300">
+              <AlertCircle className="h-4 w-4 text-rose-600 dark:text-rose-400" />
               <span>{apiError.title}</span>
             </div>
             <p className="leading-relaxed opacity-90">{apiError.suggestion}</p>
@@ -450,7 +454,7 @@ export function SingleClipper({
               <button
                 type="button"
                 onClick={onRequestOpenBotBypass}
-                className="font-semibold text-rose-400 underline hover:text-rose-300 pt-1"
+                className="font-semibold text-rose-600 dark:text-rose-400 underline hover:text-rose-500 pt-1 cursor-pointer"
               >
                 Add browser sign-in credentials
               </button>
@@ -466,7 +470,7 @@ export function SingleClipper({
             whileTap={{ scale: 0.99 }}
             disabled={!rangeCheck.valid || busy}
             onClick={handleExtract}
-            className="group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-r from-orange-600 via-rose-600 to-amber-500 hover:from-orange-500 hover:via-rose-500 hover:to-amber-400 py-4 text-base font-extrabold text-white shadow-[0_0_25px_rgba(255,87,34,0.35)] transition-all disabled:cursor-not-allowed disabled:opacity-40"
+            className="group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-r from-orange-600 via-rose-600 to-amber-500 hover:from-orange-500 hover:via-rose-500 hover:to-amber-400 py-4 text-base font-extrabold text-white shadow-[0_0_25px_rgba(255,87,34,0.35)] transition-all disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
           >
             <Scissors
               className={`h-5 w-5 transition-transform ${busy ? 'animate-spin' : 'group-hover:rotate-12'}`}
@@ -484,9 +488,9 @@ export function SingleClipper({
             <a
               href={lastClipUrl.url}
               download={lastClipUrl.filename}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-zinc-700/80 bg-[#161a2b] hover:bg-[#1f253d] py-3 text-xs sm:text-sm font-semibold text-white transition-colors"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 dark:border-zinc-700/80 bg-slate-100 hover:bg-slate-200 dark:bg-[#161a2b] dark:hover:bg-[#1f253d] py-3 text-xs sm:text-sm font-semibold text-slate-800 dark:text-white transition-colors shadow-xs"
             >
-              <Download className="h-4 w-4 text-zinc-400" />
+              <Download className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
               Download {lastClipUrl.filename} again
             </a>
           )}

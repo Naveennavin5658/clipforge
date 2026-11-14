@@ -1,5 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { Scissors, Clock, Play } from 'lucide-react';
+import React, { useRef, useState, useCallback } from 'react';
 import { formatTimecode } from '../lib/clipforge';
 
 interface FilmstripScrubberProps {
@@ -100,30 +99,30 @@ export function FilmstripScrubber({
     <div className="space-y-3 select-none">
       {/* Timecode Header Banner */}
       <div className="flex items-center justify-between text-xs font-mono">
-        <div className="flex items-center gap-1.5 text-zinc-400">
-          <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
+        <div className="flex items-center gap-1.5 text-slate-600 dark:text-zinc-400">
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
           <span>IN:</span>
-          <span className="font-bold text-white bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/60">
+          <span className="font-bold text-slate-800 dark:text-white bg-slate-100 dark:bg-zinc-800/80 px-2 py-0.5 rounded border border-slate-300 dark:border-zinc-700/60 shadow-xs">
             {formatTimecode(startSec)}
           </span>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-zinc-400 uppercase tracking-wider font-sans">
+          <span className="text-[11px] text-slate-500 dark:text-zinc-400 uppercase tracking-wider font-sans font-medium">
             Clip Duration:
           </span>
-          <span className="font-bold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-2.5 py-0.5 rounded-full">
+          <span className="font-bold text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/30 px-2.5 py-0.5 rounded-full">
             {Math.max(1, endSec - startSec)}s
             {maxCapSec ? ` (max ${maxCapSec}s)` : ''}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 text-zinc-400">
+        <div className="flex items-center gap-1.5 text-slate-600 dark:text-zinc-400">
           <span>OUT:</span>
-          <span className="font-bold text-white bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/60">
+          <span className="font-bold text-slate-800 dark:text-white bg-slate-100 dark:bg-zinc-800/80 px-2 py-0.5 rounded border border-slate-300 dark:border-zinc-700/60 shadow-xs">
             {formatTimecode(endSec)}
           </span>
-          <span className="inline-block h-2 w-2 rounded-full bg-rose-400" />
+          <span className="inline-block h-2 w-2 rounded-full bg-rose-500" />
         </div>
       </div>
 
@@ -132,9 +131,8 @@ export function FilmstripScrubber({
         ref={trackRef}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        className="relative h-20 w-full rounded-2xl bg-[#141724] border border-[#2a2f45] overflow-hidden shadow-inner cursor-pointer"
+        className="relative h-20 w-full rounded-2xl bg-slate-900 dark:bg-[#141724] border border-slate-300 dark:border-[#2a2f45] overflow-hidden shadow-inner cursor-pointer"
         onClick={(e) => {
-          // Quick seek click
           if (dragging) return;
           const clickedSec = getTimeFromX(e.clientX);
           if (Math.abs(clickedSec - startSec) < Math.abs(clickedSec - endSec)) {
@@ -147,14 +145,14 @@ export function FilmstripScrubber({
         {/* Top Sprocket Perforations */}
         <div className="absolute top-1 inset-x-0 flex justify-between px-2 pointer-events-none opacity-40">
           {Array.from({ length: 24 }).map((_, i) => (
-            <div key={i} className="w-2.5 h-1.5 rounded-xs bg-zinc-900 border border-zinc-700/50" />
+            <div key={i} className="w-2.5 h-1.5 rounded-xs bg-zinc-950 border border-zinc-700/50" />
           ))}
         </div>
 
         {/* Bottom Sprocket Perforations */}
         <div className="absolute bottom-1 inset-x-0 flex justify-between px-2 pointer-events-none opacity-40">
           {Array.from({ length: 24 }).map((_, i) => (
-            <div key={i} className="w-2.5 h-1.5 rounded-xs bg-zinc-900 border border-zinc-700/50" />
+            <div key={i} className="w-2.5 h-1.5 rounded-xs bg-zinc-950 border border-zinc-700/50" />
           ))}
         </div>
 
@@ -228,7 +226,7 @@ export function FilmstripScrubber({
       </div>
 
       {/* Millisecond / Tick Guide Markers */}
-      <div className="flex justify-between px-1 text-[10px] font-mono text-zinc-400">
+      <div className="flex justify-between px-1 text-[10px] font-mono text-slate-500 dark:text-zinc-400">
         {ticks.map((t, idx) => (
           <span key={idx} className={idx % 2 === 0 ? 'inline' : 'hidden sm:inline'}>
             {t.label}
