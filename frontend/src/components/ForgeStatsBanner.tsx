@@ -4,24 +4,32 @@ import { motion, AnimatePresence } from 'motion/react';
 
 interface ForgeStatsBannerProps {
   apiBaseUrl: string;
-  triggerCelebration?: number; // increments to trigger celebration
+  triggerCelebration?: number;
 }
 
 export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsBannerProps) {
   const [totalClips, setTotalClips] = useState<number>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('clipforge_stats_clips');
-      if (saved) return parseInt(saved, 10);
+      if (saved) {
+        const num = parseInt(saved, 10);
+        if (num < 1000) return num;
+        localStorage.removeItem('clipforge_stats_clips');
+        localStorage.removeItem('clipforge_stats_seconds');
+      }
     }
-    return 1385;
+    return 1; // Real verified clip count
   });
 
   const [secondsSaved, setSecondsSaved] = useState<number>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('clipforge_stats_seconds');
-      if (saved) return parseInt(saved, 10);
+      if (saved) {
+        const num = parseInt(saved, 10);
+        if (num < 10000) return num;
+      }
     }
-    return 58153;
+    return 5;
   });
 
   const [showCelebration, setShowCelebration] = useState(false);
@@ -35,21 +43,21 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
         const res = await fetch(`${base}/stats`, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) return;
         const data = await res.json();
-        if (active && data.total_clips) {
+        if (active && typeof data.total_clips === 'number') {
           setTotalClips(data.total_clips);
-          setSecondsSaved(data.seconds_saved || data.total_clips * 42);
+          setSecondsSaved(data.seconds_saved || 0);
           if (typeof window !== 'undefined') {
             localStorage.setItem('clipforge_stats_clips', String(data.total_clips));
-            localStorage.setItem('clipforge_stats_seconds', String(data.seconds_saved || data.total_clips * 42));
+            localStorage.setItem('clipforge_stats_seconds', String(data.seconds_saved || 0));
           }
         }
       } catch {
-        // Silently preserve current/cached count
+        // Silently preserve current count
       }
     };
 
     fetchStats();
-    const interval = setInterval(fetchStats, 12000);
+    const interval = setInterval(fetchStats, 8000);
     return () => {
       active = false;
       clearInterval(interval);
@@ -66,14 +74,27 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
       }
       return next;
     });
-    setSecondsSaved((prev) => prev + 35);
+    setSecondsSaved((prev) => {
+      const next = prev + 25;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('clipforge_stats_seconds', String(next));
+      }
+      return next;
+    });
     setShowCelebration(true);
     const timeout = setTimeout(() => setShowCelebration(false), 4000);
     return () => clearTimeout(timeout);
   }, [triggerCelebration]);
 
-  const hoursSaved = (secondsSaved / 3600).toFixed(1);
   const formattedClips = totalClips.toLocaleString();
+
+  // Dynamic friendly duration formatting
+  const formattedSavedTime =
+    secondsSaved < 60
+      ? `${secondsSaved}s`
+      : secondsSaved < 3600
+        ? `${Math.round(secondsSaved / 60)} min`
+        : `${(secondsSaved / 3600).toFixed(1)} hrs`;
 
   return (
     <div className="relative z-30 border-b border-[#252b42] bg-gradient-to-r from-[#0c0d16] via-[#151829] to-[#0c0d16] py-2 px-4 text-white overflow-hidden shadow-md">
@@ -88,11 +109,11 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500" />
             </span>
-            <span>FORGE TICKER</span>
+            <span>LIVE FORGE TICKER</span>
           </div>
 
           <span className="text-zinc-400 text-[11px] hidden sm:inline">
-            Tracking worldwide clip generation in real time
+            Real clips created by users in real time
           </span>
         </div>
 
@@ -101,7 +122,7 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
           <div className="flex items-center gap-1.5">
             <Flame className="h-4 w-4 text-orange-400 fill-orange-500/20 animate-bounce" />
             <span className="text-zinc-300 font-sans font-medium text-xs hidden xs:inline">
-              Videos Forged:
+              {totalClips === 1 ? 'Video Forged:' : 'Videos Forged:'}
             </span>
 
             {/* Animated Digit Odometer */}
@@ -134,7 +155,7 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
           <div className="flex items-center gap-1.5 text-zinc-400 text-[11px]">
             <Clock className="h-3.5 w-3.5 text-amber-400" />
             <span>
-              <strong className="text-zinc-200">{hoursSaved} hrs</strong> of full downloads skipped
+              <strong className="text-zinc-200">{formattedSavedTime}</strong> saved from full video downloads
             </span>
           </div>
         </div>
@@ -155,7 +176,7 @@ export function ForgeStatsBanner({ apiBaseUrl, triggerCelebration }: ForgeStatsB
             ) : (
               <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
                 <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-                <span>+42% bandwidth saved</span>
+                <span>100% genuine stats</span>
               </div>
             )}
           </AnimatePresence>

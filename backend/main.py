@@ -225,7 +225,7 @@ def _cleanup_dir(path: str) -> None:
 
 
 STATS_FILE = os.getenv("STATS_FILE", os.path.join(os.path.dirname(__file__), "stats.json"))
-DEFAULT_BASE_CLIPS = 1384
+DEFAULT_BASE_CLIPS = 0
 
 
 def _load_stats() -> dict:
@@ -236,8 +236,8 @@ def _load_stats() -> dict:
         except Exception:
             pass
     return {
-        "total_clips": DEFAULT_BASE_CLIPS,
-        "seconds_saved": DEFAULT_BASE_CLIPS * 42,
+        "total_clips": 0,
+        "seconds_saved": 0,
     }
 
 
