@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <!-- Forge Fire Gradient -->
+    <linearGradient id="forgeGlow" x1="10" y1="10" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF385C" />
+      <stop offset="50%" stop-color="#FF6B00" />
+      <stop offset="100%" stop-color="#FFA800" />
+    </linearGradient>
+    <linearGradient id="bladeGrad" x1="20" y1="20" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#E2E8F0" />
+    </linearGradient>
+    <!-- Anvil / Film Dark Gradient -->
+    <linearGradient id="darkMetal" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E2235" />
+      <stop offset="100%" stop-color="#0F111A" />
+    </linearGradient>
+    <filter id="emberBloom" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Outer Rounded Diamond Shield -->
+  <rect x="10" y="10" width="100" height="100" rx="28" fill="url(#darkMetal)" stroke="rgba(255, 107, 0, 0.25)" stroke-width="2" />
+  
+  <!-- Film Sprocket Dots (Top & Bottom subtle) -->
+  <rect x="22" y="18" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="38" y="18" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="54" y="18" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="70" y="18" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="86" y="18" width="8" height="5" rx="1.5" fill="#333A52" />
+
+  <rect x="22" y="97" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="38" y="97" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="54" y="97" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="70" y="97" width="8" height="5" rx="1.5" fill="#333A52" />
+  <rect x="86" y="97" width="8" height="5" rx="1.5" fill="#333A52" />
+
+  <!-- The Anvil Base -->
+  <path d="M30 84H90L82 72H38L30 84Z" fill="#252A3D" />
+
+  <!-- Scissor Shear Blades Interlocking into a Hot Spark Forge -->
+  <!-- Left Blade -->
+  <path d="M34 34L68 68M68 68L86 86M34 34C31 37 31 43 35 47C39 51 45 51 48 48L64 64" stroke="url(#forgeGlow)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  
+  <!-- Right Blade -->
+  <path d="M86 34L52 68M52 68L34 86M86 34C89 37 89 43 85 47C81 51 75 51 72 48L56 64" stroke="url(#bladeGrad)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Center Hot Forge Pivot Spark (Glowing) -->
+  <circle cx="60" cy="60" r="7" fill="#FFA800" filter="url(#emberBloom)" />
+  <circle cx="60" cy="60" r="4.5" fill="#FFF7ED" />
+  
+  <!-- Ember Sparks -->
+  <circle cx="74" cy="50" r="1.5" fill="#FF8A00" />
+  <circle cx="48" cy="46" r="1.2" fill="#FF385C" />
+  <circle cx="66" cy="74" r="1.8" fill="#FFA800" />
+</svg>
