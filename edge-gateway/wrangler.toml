@@ -1,0 +1,17 @@
+name = "clipforge-edge-gateway"
+main = "src/index.ts"
+compatibility_date = "2025-02-01"
+
+[vars]
+# Set to your Hugging Face Space or Oracle Cloud backend URL (no trailing slash)
+BACKEND_ORIGIN = "https://your-space.hf.space"
+ALLOWED_ORIGIN = "*"
+CLIP_RATE_LIMIT = "12"
+META_RATE_LIMIT = "30"
+RATE_WINDOW_SEC = "600"
+PLAYLIST_CACHE_TTL_SEC = "900"
+CLIP_DEDUPE_TTL_SEC = "120"
+
+# Add secrets via:
+#   npx wrangler secret put UPSTASH_REDIS_REST_URL
+#   npx wrangler secret put UPSTASH_REDIS_REST_TOKEN

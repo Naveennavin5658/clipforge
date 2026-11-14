@@ -3,208 +3,444 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import uuid
-import zipfile
-from pathlib import Path
-from typing import List, Optional
+from contextlib import contextmanager
+from typing import Iterator, List, Optional
 
-import zipstream
-from anyio import from_thread
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from zipstream import ZipStream
 
 MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "3"))
-MAX_CLIP_SECONDS = int(os.getenv("MAX_CLIP_SECONDS", "180"))
-MAX_BATCH_ITEMS = int(os.getenv("MAX_BATCH_ITEMS", "15"))
-MAX_BATCH_CLIP_SECONDS = int(os.getenv("MAX_BATCH_CLIP_SECONDS", "60"))
-JOB_TIMEOUT_SECONDS = int(os.getenv("JOB_TIMEOUT_SECONDS", "120"))
+MAX_SINGLE_DURATION_SEC = 180
+MAX_BATCH_DURATION_SEC = 60
+MAX_BATCH_ITEMS = 15
+MAX_PLAYLIST_ITEMS = 50
+SUBPROCESS_TIMEOUT_SEC = 120
+MAX_HEIGHT = 1080
 
-app = FastAPI(title="ClipForge Worker")
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "*").split(",")
+    if o.strip()
+]
+
+app = FastAPI(title="ClipForge Backend", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Clip-Cache-Key", "Retry-After"],
 )
 
-job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+active_jobs = 0
 
 
 class ClipRequest(BaseModel):
-    url: HttpUrl
-    start_sec: float = Field(ge=0)
-    end_sec: float = Field(gt=0)
-    max_height: int = Field(default=1080, ge=360, le=1080)
-
-    @model_validator(mode="after")
-    def validate_range(self):
-        duration = self.end_sec - self.start_sec
-        if duration <= 0:
-            raise ValueError("end_sec must be greater than start_sec")
-        if duration > MAX_CLIP_SECONDS:
-            raise ValueError(f"Clip duration exceeds {MAX_CLIP_SECONDS}s cap")
-        return self
+    url: str = Field(..., min_length=8, max_length=512)
+    start_sec: float = Field(..., ge=0)
+    end_sec: float = Field(..., gt=0)
+    cookies_txt: Optional[str] = Field(default=None, max_length=200_000)
+    po_token: Optional[str] = Field(default=None, max_length=2048)
 
 
-class BatchClipItem(ClipRequest):
-    filename: Optional[str] = Field(default=None, max_length=80)
-
-    @model_validator(mode="after")
-    def validate_batch_duration(self):
-        if (self.end_sec - self.start_sec) > MAX_BATCH_CLIP_SECONDS:
-            raise ValueError(f"Batch clip duration exceeds {MAX_BATCH_CLIP_SECONDS}s cap")
-        return self
+class BatchClipItem(BaseModel):
+    id: str = Field(..., min_length=1, max_length=64)
+    title: Optional[str] = Field(default="clip", max_length=180)
+    url: str = Field(..., min_length=8, max_length=512)
+    start_sec: float = Field(..., ge=0)
+    end_sec: float = Field(..., gt=0)
 
 
 class BatchClipRequest(BaseModel):
-    items: List[BatchClipItem] = Field(min_length=1, max_length=MAX_BATCH_ITEMS)
+    items: List[BatchClipItem] = Field(..., min_length=1, max_length=MAX_BATCH_ITEMS)
+    cookies_txt: Optional[str] = Field(default=None, max_length=200_000)
+    po_token: Optional[str] = Field(default=None, max_length=2048)
 
 
-def cleanup_dir(path: Path) -> None:
-    shutil.rmtree(path, ignore_errors=True)
+def _sanitize_filename(name: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "_", name).strip("_")
+    return (cleaned or "clip")[:80]
 
 
-def safe_filename(name: Optional[str], fallback: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", name or "").strip("._")
-    if not cleaned:
-        return f"{fallback}.mp4"
-    return cleaned if cleaned.lower().endswith(".mp4") else f"{cleaned}.mp4"
+def _extract_youtube_id(url: str) -> Optional[str]:
+    match = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})", url)
+    return match.group(1) if match else None
 
 
-async def download_clip(req: ClipRequest, work_dir: Path) -> Path:
-    work_dir.mkdir(parents=True, exist_ok=True)
-    output_template = str(work_dir / "clip.%(ext)s")
-
-    fmt = (
-        f"bestvideo[height<={req.max_height}][ext=mp4]+bestaudio[ext=m4a]/"
-        f"bestvideo[height<={req.max_height}]+bestaudio[ext=m4a]/"
-        f"bestvideo[height<={req.max_height}]+bestaudio/"
-        f"best[height<={req.max_height}]/best"
-    )
-    cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "--no-warnings",
-        "--format", fmt,
-        "--download-sections", f"*{req.start_sec}-{req.end_sec}",
-        "--merge-output-format", "mp4",
-        "--postprocessor-args", "ffmpeg:-c:v copy -c:a aac",
-        "--output", output_template,
-        str(req.url),
-    ]
-
-    async with job_semaphore:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+def _classify_yt_dlp_error(stderr: str) -> tuple[int, dict]:
+    lower = stderr.lower()
+    if any(
+        needle in lower
+        for needle in (
+            "http error 403",
+            "sign in to confirm you're not a bot",
+            "sign in to confirm you\u2019re not a bot",
+            "not a bot",
+            "po token",
+            "cookies are required",
+            "use --cookies",
         )
+    ):
+        return 403, {
+            "code": "YT_BOT_CHECK",
+            "message": "YouTube flagged this datacenter request for bot verification (HTTP 403).",
+            "hint": "Expand Bot-Check Bypass in the UI and attach Netscape cookies.txt or a PO Token from your browser session.",
+            "needs_bot_bypass": True,
+        }
+
+    if "private video" in lower or "video unavailable" in lower or "members-only" in lower:
+        return 404, {
+            "code": "YT_UNAVAILABLE",
+            "message": "This video is private, age-restricted, or unavailable.",
+            "hint": "Confirm the video is public or supply session cookies if you have access.",
+            "needs_bot_bypass": False,
+        }
+
+    if "live event" in lower or "is live" in lower:
+        return 400, {
+            "code": "LIVE_STREAM_UNSUPPORTED",
+            "message": "Active live streams cannot be section-clipped until they finish processing.",
+            "hint": "Wait until the VOD archive is available, or trim a local recording.",
+            "needs_bot_bypass": False,
+        }
+
+    return 500, {
+        "code": "EXTRACTION_FAILED",
+        "message": stderr.strip().splitlines()[-1][:300] if stderr.strip() else "yt-dlp failed to extract the requested section.",
+        "hint": "Verify the URL and try a shorter timestamp window.",
+        "needs_bot_bypass": False,
+    }
+
+
+@contextmanager
+def _ephemeral_cookie_file(cookies_txt: Optional[str]) -> Iterator[Optional[str]]:
+    if not cookies_txt or not cookies_txt.strip():
+        yield None
+        return
+
+    fd, path = tempfile.mkstemp(prefix="cf_ck_", suffix=".txt")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(cookies_txt.strip() + "\n")
+        os.chmod(path, 0o600)
+        yield path
+    finally:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+async def _run_cmd(args: List[str], timeout: int = SUBPROCESS_TIMEOUT_SEC) -> tuple[int, bytes, bytes]:
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return proc.returncode or 0, stdout, stderr
+    except asyncio.TimeoutError:
         try:
-            _, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=JOB_TIMEOUT_SECONDS
-            )
-        except asyncio.TimeoutError:
             proc.kill()
-            await proc.wait()
-            raise HTTPException(status_code=504, detail="Clip job timed out")
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "TIMEOUT",
+                "message": f"Extraction exceeded {timeout}s subprocess timeout.",
+                "hint": "Try a shorter clip duration or retry when YouTube throttling subsides.",
+            },
+        )
 
-        if proc.returncode != 0:
-            full_err = stderr.decode(errors="ignore").strip()
-            import sys
-            print(f"[yt-dlp FAILED] returncode={proc.returncode}\n"
-                  f"  cmd={' '.join(cmd)}\n"
-                  f"  stderr={full_err}", file=sys.stderr)
-            err_msg = full_err.splitlines()[-1:] or ["yt-dlp failed"]
-            raise HTTPException(status_code=502, detail=err_msg[0])
 
-        files = list(work_dir.glob("clip.*"))
-        if not files:
-            raise HTTPException(status_code=500, detail="Output file not generated")
-        return files[0]
+def _build_yt_dlp_base_args(cookie_path: Optional[str], po_token: Optional[str]) -> List[str]:
+    args = [
+        "yt-dlp",
+        "--no-warnings",
+        "--no-playlist",
+        "--socket-timeout",
+        "20",
+        "--retries",
+        "2",
+    ]
+    if cookie_path:
+        args.extend(["--cookies", cookie_path])
+    if po_token and po_token.strip():
+        clean_token = po_token.strip().replace('"', "")
+        args.extend(["--extractor-args", f"youtube:po_token=web+{clean_token}"])
+    return args
+
+
+def _cleanup_dir(path: str) -> None:
+    shutil.rmtree(path, ignore_errors=True)
 
 
 @app.get("/health")
 async def health():
+    available = max(0, MAX_CONCURRENT_JOBS - active_jobs)
     return {
         "status": "ok",
-        "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
-        "available_slots": job_semaphore._value,
+        "active_slots": active_jobs,
+        "available_slots": available,
+        "max_slots": MAX_CONCURRENT_JOBS,
     }
 
 
 @app.get("/playlist-meta")
-async def playlist_meta(url: str, limit: int = 50):
-    cmd = [
-        "yt-dlp",
-        "--flat-playlist",
-        "--dump-single-json",
-        "--playlist-end", str(min(limit, 50)),
-        url,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
-    if proc.returncode != 0:
-        raise HTTPException(status_code=400, detail="Could not read playlist metadata")
+async def playlist_meta(
+    url: str = Query(..., min_length=8, max_length=512),
+    x_yt_cookies: Optional[str] = Header(default=None),
+    x_yt_po_token: Optional[str] = Header(default=None),
+):
+    global active_jobs
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=8.0)
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "SLOTS_BUSY",
+                "message": "All worker slots are busy right now.",
+                "hint": "Wait 10–20 seconds and retry.",
+            },
+        )
 
-    data = json.loads(stdout.decode())
-    entries = [
-        {
-            "id": e.get("id"),
-            "title": e.get("title"),
-            "duration": e.get("duration"),
-            "url": f"https://www.youtube.com/watch?v={e.get('id')}",
-        }
-        for e in (data.get("entries") or [])
-        if e.get("id")
-    ]
-    return {"title": data.get("title"), "count": len(entries), "entries": entries}
+    active_jobs += 1
+    try:
+        with _ephemeral_cookie_file(x_yt_cookies) as cookie_path:
+            args = [
+                "yt-dlp",
+                "--flat-playlist",
+                "--dump-single-json",
+                "--playlist-end",
+                str(MAX_PLAYLIST_ITEMS),
+                "--no-warnings",
+            ]
+            if cookie_path:
+                args.extend(["--cookies", cookie_path])
+            if x_yt_po_token and x_yt_po_token.strip():
+                clean_token = x_yt_po_token.strip().replace('"', "")
+                args.extend(["--extractor-args", f"youtube:po_token=web+{clean_token}"])
+            args.append(url)
+
+            rc, stdout, stderr = await _run_cmd(args, timeout=45)
+            if rc != 0:
+                status_code, payload = _classify_yt_dlp_error(stderr.decode("utf-8", errors="replace"))
+                return JSONResponse(status_code=status_code, content=payload)
+
+            data = json.loads(stdout.decode("utf-8", errors="replace"))
+            entries = data.get("entries") or []
+            items = []
+            for idx, entry in enumerate(entries[:MAX_PLAYLIST_ITEMS]):
+                vid_id = entry.get("id") or f"item_{idx}"
+                vid_url = entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}"
+                if not vid_url.startswith("http"):
+                    vid_url = f"https://www.youtube.com/watch?v={vid_id}"
+                items.append(
+                    {
+                        "id": vid_id,
+                        "title": entry.get("title") or f"Track {idx + 1}",
+                        "duration": entry.get("duration"),
+                        "url": vid_url,
+                    }
+                )
+
+            return {
+                "list_id": data.get("id"),
+                "title": data.get("title") or "YouTube Playlist",
+                "item_count": len(items),
+                "capped_at": MAX_PLAYLIST_ITEMS,
+                "items": items,
+            }
+    finally:
+        active_jobs = max(0, active_jobs - 1)
+        semaphore.release()
+
+
+async def _extract_single_to_file(
+    url: str,
+    start_sec: float,
+    end_sec: float,
+    out_path: str,
+    cookies_txt: Optional[str],
+    po_token: Optional[str],
+) -> None:
+    with _ephemeral_cookie_file(cookies_txt) as cookie_path:
+        args = _build_yt_dlp_base_args(cookie_path, po_token)
+        section = f"*{int(start_sec)}-{int(end_sec)}"
+        fmt = (
+            f"bestvideo[height<={MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/"
+            f"bestvideo[height<={MAX_HEIGHT}]+bestaudio[ext=m4a]/"
+            f"bestvideo[height<={MAX_HEIGHT}]+bestaudio/"
+            f"best[height<={MAX_HEIGHT}]/best"
+        )
+        args.extend(
+            [
+                "-f",
+                fmt,
+                "--download-sections",
+                section,
+                "--force-keyframes-at-cuts",
+                "--merge-output-format",
+                "mp4",
+                "--postprocessor-args",
+                "ffmpeg:-c:v copy -c:a aac -movflags +faststart",
+                "-o",
+                out_path,
+                url,
+            ]
+        )
+        rc, _stdout, stderr = await _run_cmd(args, timeout=SUBPROCESS_TIMEOUT_SEC)
+        if rc != 0 or not os.path.exists(out_path):
+            status_code, payload = _classify_yt_dlp_error(stderr.decode("utf-8", errors="replace"))
+            raise HTTPException(status_code=status_code, detail=payload)
 
 
 @app.post("/clip")
-async def create_clip(req: ClipRequest, background_tasks: BackgroundTasks):
-    work_dir = Path("/tmp") / f"clip_{uuid.uuid4().hex}"
-    try:
-        clip_path = await download_clip(req, work_dir)
-        background_tasks.add_task(cleanup_dir, work_dir)
-        return FileResponse(
-            path=clip_path,
-            media_type="video/mp4",
-            filename=f"clip_{int(req.start_sec)}_{int(req.end_sec)}.mp4",
+async def clip_single(req: ClipRequest, background_tasks: BackgroundTasks):
+    global active_jobs
+    duration = req.end_sec - req.start_sec
+    if duration <= 0 or duration > MAX_SINGLE_DURATION_SEC:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_RANGE",
+                "message": f"Clip duration must be between 1s and {MAX_SINGLE_DURATION_SEC}s.",
+            },
         )
-    except Exception:
-        cleanup_dir(work_dir)
-        raise
+
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=10.0)
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "SLOTS_BUSY",
+                "message": "All 3 concurrency slots are busy. Retry in a few seconds.",
+            },
+        )
+
+    active_jobs += 1
+    work_dir = tempfile.mkdtemp(prefix="cf_single_")
+    vid_id = _extract_youtube_id(req.url) or "video"
+    out_file = os.path.join(work_dir, f"{vid_id}_{int(req.start_sec)}_{int(req.end_sec)}.mp4")
+
+    try:
+        await _extract_single_to_file(
+            req.url,
+            req.start_sec,
+            req.end_sec,
+            out_file,
+            req.cookies_txt,
+            req.po_token,
+        )
+        background_tasks.add_task(_cleanup_dir, work_dir)
+        cache_key = f"{vid_id}:{int(req.start_sec)}:{int(req.end_sec)}"
+        return FileResponse(
+            out_file,
+            media_type="video/mp4",
+            filename=os.path.basename(out_file),
+            headers={"X-Clip-Cache-Key": cache_key},
+        )
+    except HTTPException as exc:
+        _cleanup_dir(work_dir)
+        content = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        return JSONResponse(status_code=exc.status_code, content=content)
+    except Exception as exc:
+        _cleanup_dir(work_dir)
+        return JSONResponse(
+            status_code=500,
+            content={"code": "INTERNAL_ERROR", "message": str(exc)[:300]},
+        )
+    finally:
+        active_jobs = max(0, active_jobs - 1)
+        semaphore.release()
 
 
 @app.post("/batch-clip")
-def create_batch_clip(req: BatchClipRequest):
-    batch_id = uuid.uuid4().hex
-    zs = zipstream.ZipStream(compress_type=zipfile.ZIP_STORED)
+async def batch_clip(req: BatchClipRequest):
+    if len(req.items) > MAX_BATCH_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "BATCH_TOO_LARGE", "message": f"Max {MAX_BATCH_ITEMS} clips per batch."},
+        )
 
-    for idx, item in enumerate(req.items, start=1):
-        arcname = safe_filename(item.filename, f"clip_{idx:02d}_{int(item.start_sec)}_{int(item.end_sec)}")
-        item_dir = Path("/tmp") / f"batch_{batch_id}_{idx}"
+    for item in req.items:
+        dur = item.end_sec - item.start_sec
+        if dur <= 0 or dur > MAX_BATCH_DURATION_SEC:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_RANGE",
+                    "message": f"Item '{item.title or item.id}' exceeds {MAX_BATCH_DURATION_SEC}s batch clip limit.",
+                },
+            )
 
-        def stream_one(clip_req: BatchClipItem = item, work_dir: Path = item_dir):
+    async def zip_generator():
+        global active_jobs
+        zs = ZipStream(sized=False)
+        failures: List[str] = []
+
+        for idx, item in enumerate(req.items, start=1):
+            work_dir = tempfile.mkdtemp(prefix=f"cf_batch_{uuid.uuid4().hex[:6]}_")
+            safe_title = _sanitize_filename(item.title or item.id)
+            filename = f"{idx:02d}_{safe_title}_{int(item.start_sec)}-{int(item.end_sec)}.mp4"
+            out_path = os.path.join(work_dir, filename)
+
+            await semaphore.acquire()
+            active_jobs += 1
             try:
-                clip_path = from_thread.run(download_clip, clip_req, work_dir)
-                with open(clip_path, "rb") as f:
-                    while chunk := f.read(64 * 1024):
-                        yield chunk
-            except Exception as exc:
-                detail = getattr(exc, "detail", str(exc))
-                yield f"Failed to clip {clip_req.url}: {detail}\n".encode()
-            finally:
-                cleanup_dir(work_dir)
+                await _extract_single_to_file(
+                    item.url,
+                    item.start_sec,
+                    item.end_sec,
+                    out_path,
+                    req.cookies_txt,
+                    req.po_token,
+                )
 
-        zs.add(stream_one(), arcname=arcname)
+                def _read_and_delete(file_path: str, dir_path: str):
+                    try:
+                        with open(file_path, "rb") as f:
+                            while chunk := f.read(1024 * 256):
+                                yield chunk
+                    finally:
+                        _cleanup_dir(dir_path)
+
+                zs.add(_read_and_delete(out_path, work_dir), filename)
+                for chunk in zs:
+                    yield chunk
+            except HTTPException as exc:
+                _cleanup_dir(work_dir)
+                detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+                failures.append(f"{filename}: {detail.get('message', 'Failed')}")
+            except Exception as exc:
+                _cleanup_dir(work_dir)
+                failures.append(f"{filename}: {str(exc)[:180]}")
+            finally:
+                active_jobs = max(0, active_jobs - 1)
+                semaphore.release()
+
+        if failures:
+            report_text = "Some clips could not be extracted:\n\n" + "\n".join(failures) + "\n"
+            zs.add(report_text.encode("utf-8"), "_clipforge_errors.txt")
+
+        for chunk in zs:
+            yield chunk
 
     return StreamingResponse(
-        zs,
+        zip_generator(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="clips_{batch_id[:8]}.zip"'},
+        headers={"Content-Disposition": 'attachment; filename="clipforge_batch.zip"'},
     )

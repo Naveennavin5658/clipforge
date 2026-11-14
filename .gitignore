@@ -4,4 +4,10 @@ dist/
 __pycache__/
 *.pyc
 .env
+.env.local
+*.local
 .DS_Store
+.aistudio/
+.wrangler/
+*.log
+tmp/

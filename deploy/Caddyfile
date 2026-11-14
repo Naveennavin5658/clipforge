@@ -1,0 +1,8 @@
+api.clipforge.example.com {
+    reverse_proxy clipforge-backend:7860 {
+        flush_interval -1
+        transport http {
+            response_header_timeout 180s
+        }
+    }
+}
