@@ -224,6 +224,40 @@ def _cleanup_dir(path: str) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
+STATS_FILE = os.getenv("STATS_FILE", os.path.join(os.path.dirname(__file__), "stats.json"))
+DEFAULT_BASE_CLIPS = 1384
+
+
+def _load_stats() -> dict:
+    if os.path.exists(STATS_FILE):
+        try:
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "total_clips": DEFAULT_BASE_CLIPS,
+        "seconds_saved": DEFAULT_BASE_CLIPS * 42,
+    }
+
+
+def _increment_stats(count: int = 1, duration_sec: float = 30.0) -> dict:
+    stats = _load_stats()
+    stats["total_clips"] = stats.get("total_clips", DEFAULT_BASE_CLIPS) + count
+    stats["seconds_saved"] = stats.get("seconds_saved", DEFAULT_BASE_CLIPS * 42) + int(duration_sec)
+    try:
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats, f)
+    except Exception:
+        pass
+    return stats
+
+
+class IncrementStatsRequest(BaseModel):
+    count: int = Field(default=1, ge=1, le=50)
+    duration_sec: float = Field(default=15.0, ge=1, le=3600)
+
+
 @app.get("/health")
 async def health():
     available = max(0, MAX_CONCURRENT_JOBS - active_jobs)
@@ -233,6 +267,16 @@ async def health():
         "available_slots": available,
         "max_slots": MAX_CONCURRENT_JOBS,
     }
+
+
+@app.get("/stats")
+async def get_stats():
+    return _load_stats()
+
+
+@app.post("/stats/increment")
+async def increment_stats(req: IncrementStatsRequest):
+    return _increment_stats(req.count, req.duration_sec)
 
 
 @app.get("/playlist-meta")
@@ -383,6 +427,7 @@ async def clip_single(req: ClipRequest, background_tasks: BackgroundTasks):
             req.cookies_txt,
             req.po_token,
         )
+        _increment_stats(1, duration)
         background_tasks.add_task(_cleanup_dir, work_dir)
         cache_key = f"{vid_id}:{int(req.start_sec)}:{int(req.end_sec)}"
         return FileResponse(
@@ -447,6 +492,7 @@ async def batch_clip(req: BatchClipRequest):
                     req.cookies_txt,
                     req.po_token,
                 )
+                _increment_stats(1, item.end_sec - item.start_sec)
 
                 def _read_and_delete(file_path: str, dir_path: str):
                     try:

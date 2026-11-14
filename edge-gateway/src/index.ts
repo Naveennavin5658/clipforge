@@ -103,9 +103,22 @@ export default {
     const dedupeTtl = Number(env.CLIP_DEDUPE_TTL_SEC || '120');
     const backendOrigin = env.BACKEND_ORIGIN.replace(/\/+$/, '');
 
-    // 1. Health pass-through
+    // 1. Health & Stats pass-through
     if (url.pathname === '/health' && request.method === 'GET') {
       const upstream = await fetch(`${backendOrigin}/health`);
+      const body = await upstream.text();
+      return new Response(body, {
+        status: upstream.status,
+        headers: { ...baseCors, 'Content-Type': 'application/json', 'X-Edge-Gateway': 'clipforge-cf' },
+      });
+    }
+
+    if (url.pathname === '/stats' || url.pathname === '/stats/increment') {
+      const upstream = await fetch(`${backendOrigin}${url.pathname}`, {
+        method: request.method,
+        headers: request.headers,
+        body: request.method === 'POST' ? request.body : undefined,
+      });
       const body = await upstream.text();
       return new Response(body, {
         status: upstream.status,

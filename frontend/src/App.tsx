@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Sparkles, Film, FileVideo, Layers, HelpCircle, X, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Header } from './components/Header';
+import { ForgeStatsBanner } from './components/ForgeStatsBanner';
 import { UniversalInput } from './components/UniversalInput';
 import { BotBypassPanel } from './components/BotBypassPanel';
 import { SingleClipper } from './components/SingleClipper';
@@ -25,6 +26,7 @@ export default function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE);
   const [configOpen, setConfigOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [celebrationKey, setCelebrationKey] = useState(0);
 
   const [botBypassOpen, setBotBypassOpen] = useState(false);
   const [botBypass, setBotBypass] = useState<BotBypassCredentials>({ cookiesTxt: '', poToken: '' });
@@ -72,6 +74,9 @@ export default function App() {
     <div id="top" className="min-h-screen flex flex-col bg-[#0b0c14] text-zinc-100 font-sans selection:bg-orange-500 selection:text-white relative overflow-hidden">
       {/* Ambient Forge Glow in Background */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[350px] bg-gradient-to-b from-orange-600/15 via-rose-600/10 to-transparent blur-[120px] pointer-events-none" />
+
+      {/* Live Animated Forge Ticker Flex Banner */}
+      <ForgeStatsBanner apiBaseUrl={apiBaseUrl} triggerCelebration={celebrationKey} />
 
       <Header
         onOpenConfig={() => setConfigOpen(true)}
@@ -156,6 +161,7 @@ export default function App() {
                 apiBaseUrl={apiBaseUrl}
                 botBypass={botBypass}
                 onRequestOpenBotBypass={() => setBotBypassOpen(true)}
+                onClipForged={() => setCelebrationKey((k) => k + 1)}
               />
             </motion.div>
           )}
@@ -173,6 +179,7 @@ export default function App() {
                 apiBaseUrl={apiBaseUrl}
                 botBypass={botBypass}
                 onRequestOpenBotBypass={() => setBotBypassOpen(true)}
+                onClipForged={(count) => setCelebrationKey((k) => k + count)}
               />
             </motion.div>
           )}

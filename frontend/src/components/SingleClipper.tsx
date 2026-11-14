@@ -34,6 +34,7 @@ interface SingleClipperProps {
   apiBaseUrl: string;
   botBypass: BotBypassCredentials;
   onRequestOpenBotBypass: () => void;
+  onClipForged?: () => void;
 }
 
 export function SingleClipper({
@@ -44,6 +45,7 @@ export function SingleClipper({
   apiBaseUrl,
   botBypass,
   onRequestOpenBotBypass,
+  onClipForged,
 }: SingleClipperProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [startSec, setStartSec] = useState<number>(0);
@@ -135,6 +137,15 @@ export function SingleClipper({
         const downloadUrl = URL.createObjectURL(result.blob);
         setLastClipUrl({ url: downloadUrl, filename: result.filename });
         setStatusMsg(`Done! Saved ${formatBytes(result.blob.size)} directly to your device.`);
+        onClipForged?.();
+        const base = apiBaseUrl.trim().replace(/\/+$/, '');
+        if (base) {
+          fetch(`${base}/stats/increment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ count: 1, duration_sec: Math.max(1, rangeCheck.endSec - rangeCheck.startSec) }),
+          }).catch(() => {});
+        }
         // Trigger download
         const a = document.createElement('a');
         a.href = downloadUrl;
@@ -192,6 +203,7 @@ export function SingleClipper({
         const downloadUrl = URL.createObjectURL(blob);
         setLastClipUrl({ url: downloadUrl, filename });
         setStatusMsg(`Clip Ready (${formatBytes(blob.size)})! Downloading now...`);
+        onClipForged?.();
 
         // Trigger immediate browser download
         const a = document.createElement('a');

@@ -31,6 +31,7 @@ interface PlaylistBatcherProps {
   apiBaseUrl: string;
   botBypass: BotBypassCredentials;
   onRequestOpenBotBypass: () => void;
+  onClipForged?: (count: number) => void;
 }
 
 const CHAI_TIP_URL = import.meta.env.VITE_CHAI_TIP_URL || 'https://buymeacoffee.com/clipforge';
@@ -41,6 +42,7 @@ export function PlaylistBatcher({
   apiBaseUrl,
   botBypass,
   onRequestOpenBotBypass,
+  onClipForged,
 }: PlaylistBatcherProps) {
   const [playlistTitle, setPlaylistTitle] = useState<string>('YouTube Playlist');
   const [rows, setRows] = useState<PlaylistClipRow[]>([]);
@@ -196,6 +198,7 @@ export function PlaylistBatcher({
       const downloadUrl = URL.createObjectURL(blob);
       setZipDownload({ url: downloadUrl, size: blob.size });
       setStatusMsg(`Success! ${validatedItems.length} clips forged into ZIP (${formatBytes(blob.size)}).`);
+      onClipForged?.(validatedItems.length);
 
       const a = document.createElement('a');
       a.href = downloadUrl;
