@@ -3,10 +3,21 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
 from typing import Iterator, List, Optional
+
+# Ensure virtualenv bin and common tool locations (Homebrew ffmpeg) are on PATH
+_extra_paths = [
+    os.path.dirname(sys.executable),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+]
+for _p in _extra_paths:
+    if os.path.isdir(_p) and _p not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = _p + os.pathsep + os.environ.get("PATH", "")
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -139,14 +150,41 @@ def _ephemeral_cookie_file(cookies_txt: Optional[str]) -> Iterator[Optional[str]
                 pass
 
 
+def _get_yt_dlp_cmd() -> List[str]:
+    # Check if yt-dlp binary is directly available in PATH
+    binary = shutil.which("yt-dlp")
+    if binary:
+        return [binary]
+    # Check adjacent to sys.executable (e.g. inside .venv/bin)
+    venv_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+    if os.path.exists(venv_bin) and os.access(venv_bin, os.X_OK):
+        return [venv_bin]
+    # Fallback to python -m yt_dlp
+    return [sys.executable, "-m", "yt_dlp"]
+
+
 async def _run_cmd(args: List[str], timeout: int = SUBPROCESS_TIMEOUT_SEC) -> tuple[int, bytes, bytes]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as exc:
+        print(f"[SUBPROCESS SPAWN ERROR] cmd={' '.join(args[:4])}... error={exc}", file=sys.stderr)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "SPAWN_ERROR",
+                "message": f"Failed to execute {args[0]}: {str(exc)}",
+            },
+        )
+
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode != 0:
+            err_text = stderr.decode("utf-8", errors="replace").strip()
+            print(f"[SUBPROCESS FAILED] rc={proc.returncode} cmd={' '.join(args[:6])}...\nstderr: {err_text}", file=sys.stderr)
         return proc.returncode or 0, stdout, stderr
     except asyncio.TimeoutError:
         try:
@@ -165,15 +203,15 @@ async def _run_cmd(args: List[str], timeout: int = SUBPROCESS_TIMEOUT_SEC) -> tu
 
 
 def _build_yt_dlp_base_args(cookie_path: Optional[str], po_token: Optional[str]) -> List[str]:
-    args = [
-        "yt-dlp",
+    args = list(_get_yt_dlp_cmd())
+    args.extend([
         "--no-warnings",
         "--no-playlist",
         "--socket-timeout",
         "20",
         "--retries",
         "2",
-    ]
+    ])
     if cookie_path:
         args.extend(["--cookies", cookie_path])
     if po_token and po_token.strip():
@@ -219,14 +257,14 @@ async def playlist_meta(
     active_jobs += 1
     try:
         with _ephemeral_cookie_file(x_yt_cookies) as cookie_path:
-            args = [
-                "yt-dlp",
+            args = list(_get_yt_dlp_cmd())
+            args.extend([
                 "--flat-playlist",
                 "--dump-single-json",
                 "--playlist-end",
                 str(MAX_PLAYLIST_ITEMS),
                 "--no-warnings",
-            ]
+            ])
             if cookie_path:
                 args.extend(["--cookies", cookie_path])
             if x_yt_po_token and x_yt_po_token.strip():
