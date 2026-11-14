@@ -7,7 +7,7 @@ import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
-from typing import Iterator, List, Optional
+from typing import Any, Iterator, List, Optional, Union
 
 # Ensure virtualenv bin and common tool locations (Homebrew ffmpeg) are on PATH
 _extra_paths = [
