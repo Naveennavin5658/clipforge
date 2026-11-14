@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Coffee, Download, RefreshCw } from 'lucide-react';
+import {
+  Download,
+  RefreshCw,
+  CheckSquare,
+  Square,
+  Sparkles,
+  Layers,
+  Clock,
+  AlertCircle,
+  Coffee,
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   MAX_BATCH_CLIP_SEC,
   MAX_BATCH_ITEMS,
@@ -52,14 +63,15 @@ export function PlaylistBatcher({
   const fetchPlaylistMeta = async () => {
     const base = apiBaseUrl.trim().replace(/\/+$/, '');
     if (!base) {
-      setApiError(classifyApiError(0, 'No Backend Gateway URL configured.'));
+      setApiError(classifyApiError(0, 'Backend is not configured.'));
       return;
     }
 
     setLoadingMeta(true);
     setApiError(null);
-    setStatusMsg(null);
     setCapWarning(false);
+    setStatusMsg(null);
+    setZipDownload(null);
 
     try {
       const headers: Record<string, string> = {};
@@ -73,74 +85,83 @@ export function PlaylistBatcher({
         return;
       }
 
-      const data = (await res.json()) as {
-        title?: string;
-        items?: Array<{ id: string; title: string; duration: number | null; url: string }>;
-      };
+      const data = await res.json();
+      setPlaylistTitle(data.title || 'YouTube Playlist');
 
-      const mapped: PlaylistClipRow[] = (data.items || []).map((item, idx) => ({
-        id: item.id,
-        title: item.title,
-        url: item.url,
-        durationSec: item.duration,
-        selected: idx < 3,
+      const items = (data.items || []).map((it: { id: string; title: string; duration?: number; url: string }, idx: number) => ({
+        id: it.id || `item_${idx}`,
+        title: it.title || `Video ${idx + 1}`,
+        durationSec: it.duration ?? null,
+        url: it.url,
+        selected: idx < 5, // Select first 5 by default
         start: '00:00',
         end: '00:30',
       }));
 
-      setPlaylistTitle(data.title || 'YouTube Playlist');
-      setRows(mapped);
+      setRows(items);
     } catch (err) {
-      setApiError(classifyApiError(0, err instanceof Error ? err.message : 'Network error'));
+      const message = err instanceof Error ? err.message : 'Could not fetch playlist';
+      setApiError(classifyApiError(0, message));
     } finally {
       setLoadingMeta(false);
     }
   };
 
   useEffect(() => {
-    setRows([]);
-    setZipDownload(null);
-    void fetchPlaylistMeta();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canonicalUrl]);
+    if (canonicalUrl) {
+      fetchPlaylistMeta();
+    }
+  }, [canonicalUrl, listId]);
 
-  const selectedRows = rows.filter((r) => r.selected);
-  const showChai = shouldShowChaiPrompt(selectedRows.length);
+  const selectedCount = rows.filter((r) => r.selected).length;
+  const showChai = shouldShowChaiPrompt(selectedCount);
 
   const handleToggleRow = (id: string) => {
-    const result = toggleBatchRowSelection(rows, id, MAX_BATCH_ITEMS);
+    const result = toggleBatchRowSelection(rows, id);
     setRows(result.rows);
     setCapWarning(result.capReached);
   };
 
-  const handleRowTime = (id: string, field: 'start' | 'end', value: string) => {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+  const handleSelectAll = (select: boolean) => {
+    const updated = rows.map((r, i) => ({
+      ...r,
+      selected: select ? i < MAX_BATCH_ITEMS : false,
+    }));
+    setRows(updated);
+    if (select && rows.length > MAX_BATCH_ITEMS) {
+      setCapWarning(true);
+    } else {
+      setCapWarning(false);
+    }
   };
 
   const handleApplyBulk = () => {
-    const check = validateClipRange(bulkStart, bulkEnd, MAX_BATCH_CLIP_SEC);
-    if (!check.valid) {
-      setStatusMsg(check.error || 'Invalid bulk range.');
-      return;
-    }
-    setStatusMsg(null);
-    setRows((prev) => applyBulkRangeToSelected(prev, bulkStart, bulkEnd));
+    const updated = applyBulkRangeToSelected(rows, bulkStart, bulkEnd);
+    setRows(updated);
   };
 
   const handleDownloadBatch = async () => {
-    if (selectedRows.length === 0) return;
+    const selected = rows.filter((r) => r.selected);
+    if (selected.length === 0) return;
 
+    // Validate ranges
     const validatedItems = [];
-    for (const row of selectedRows) {
-      const check = validateClipRange(row.start, row.end, MAX_BATCH_CLIP_SEC);
+    for (const item of selected) {
+      const check = validateClipRange(item.start, item.end, MAX_BATCH_CLIP_SEC);
       if (!check.valid) {
-        setStatusMsg(`"${row.title}": ${check.error}`);
+        setApiError({
+          code: 'INVALID_RANGE',
+          title: `Time issue in "${item.title}"`,
+          detail: check.error || `Clips must be between 1s and ${MAX_BATCH_CLIP_SEC}s`,
+          suggestion: `Please adjust timestamps for "${item.title}" before downloading.`,
+          needsBotBypass: false,
+        });
         return;
       }
       validatedItems.push({
-        id: row.id,
-        title: row.title,
-        url: row.url,
+        id: item.id,
+        title: item.title,
+        url: item.url,
         start_sec: check.startSec,
         end_sec: check.endSec,
       });
@@ -148,13 +169,14 @@ export function PlaylistBatcher({
 
     const base = apiBaseUrl.trim().replace(/\/+$/, '');
     if (!base) {
-      setApiError(classifyApiError(0, 'No Backend Gateway URL configured.'));
+      setApiError(classifyApiError(0, 'Backend is not configured.'));
       return;
     }
 
     setBatchBusy(true);
     setApiError(null);
-    setStatusMsg(`Streaming ZIP for ${validatedItems.length} clips (max 3 concurrent slots)...`);
+    setStatusMsg(`Packaging ${validatedItems.length} clips into your ZIP...`);
+
     try {
       const res = await fetch(`${base}/batch-clip`, {
         method: 'POST',
@@ -169,216 +191,223 @@ export function PlaylistBatcher({
       if (!res.ok) {
         const text = await res.text();
         setApiError(classifyApiError(res.status, text, res.headers.get('Retry-After')));
-        setStatusMsg(null);
         return;
       }
 
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      setZipDownload({ url, size: blob.size });
-      setStatusMsg(`Batch ZIP ready (${formatBytes(blob.size)}).`);
+      const downloadUrl = URL.createObjectURL(blob);
+      setZipDownload({ url: downloadUrl, size: blob.size });
+      setStatusMsg(`All ${validatedItems.length} clips downloaded (${formatBytes(blob.size)})!`);
+
+      // Trigger automatic download
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `clipforge_${playlistTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_')}.zip`;
+      a.click();
     } catch (err) {
-      setApiError(classifyApiError(0, err instanceof Error ? err.message : 'Network error'));
-      setStatusMsg(null);
+      const message = err instanceof Error ? err.message : 'Batch download failed';
+      setApiError(classifyApiError(0, message));
     } finally {
       setBatchBusy(false);
     }
   };
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
-      {/* Header Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 px-6 py-4">
-        <div>
-          <h2 className="font-display text-lg font-semibold text-zinc-950">{playlistTitle}</h2>
-          <p className="text-xs text-zinc-500 font-mono tabular-nums mt-0.5">
-            {listId || 'Playlist'} · {selectedRows.length} / {MAX_BATCH_ITEMS} clips selected · {MAX_BATCH_CLIP_SEC}s per clip max
-          </p>
-        </div>
+    <div className="space-y-6">
+      {/* Playlist Header Card */}
+      <div className="rounded-3xl border border-zinc-200/80 bg-white p-6 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-purple-100 text-purple-600 shadow-sm">
+              <Layers className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="font-display text-xl font-bold tracking-tight text-zinc-950">
+                {playlistTitle}
+              </h2>
+              <p className="text-xs text-zinc-500 font-medium mt-0.5">
+                {rows.length > 0 ? `${rows.length} videos found • Choose up to ${MAX_BATCH_ITEMS} to download` : 'Loading playlist...'}
+              </p>
+            </div>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={loadingMeta}
             onClick={fetchPlaylistMeta}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 whitespace-nowrap shrink-0"
+            disabled={loadingMeta}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 px-3.5 py-2 text-xs font-semibold text-zinc-700 transition-colors shadow-sm disabled:opacity-50"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loadingMeta ? 'animate-spin' : ''}`} aria-hidden="true" />
-            Refresh Metadata
-          </button>
-
-          <button
-            type="button"
-            disabled={selectedRows.length === 0 || batchBusy}
-            onClick={handleDownloadBatch}
-            className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-xs font-medium text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap shrink-0"
-          >
-            <Download className="h-3.5 w-3.5" aria-hidden="true" />
-            {batchBusy ? 'Streaming ZIP...' : `Download Batch ZIP (${selectedRows.length})`}
-          </button>
-        </div>
-      </div>
-
-      {/* Bulk Range Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 bg-zinc-50 px-6 py-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-medium text-zinc-700">Bulk range:</span>
-          <label htmlFor="bulk-start" className="sr-only">
-            Bulk start time
-          </label>
-          <input
-            id="bulk-start"
-            type="text"
-            value={bulkStart}
-            onChange={(e) => setBulkStart(e.target.value)}
-            className="w-20 rounded border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums text-zinc-900"
-          />
-          <span className="text-zinc-400">to</span>
-          <label htmlFor="bulk-end" className="sr-only">
-            Bulk end time
-          </label>
-          <input
-            id="bulk-end"
-            type="text"
-            value={bulkEnd}
-            onChange={(e) => setBulkEnd(e.target.value)}
-            className="w-20 rounded border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums text-zinc-900"
-          />
-          <button
-            type="button"
-            onClick={handleApplyBulk}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-100 whitespace-nowrap shrink-0"
-          >
-            Apply {bulkStart}–{bulkEnd} to selected
+            <RefreshCw className={`h-3.5 w-3.5 ${loadingMeta ? 'animate-spin' : ''}`} />
+            Refresh
           </button>
         </div>
 
+        {/* Bulk Duration Controller */}
+        {rows.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-purple-50/50 border border-purple-100 p-4">
+            <div className="flex items-center gap-3 text-xs">
+              <span className="font-semibold text-purple-950">Quick Clip Length:</span>
+              <div className="flex items-center gap-1.5 font-mono">
+                <input
+                  type="text"
+                  value={bulkStart}
+                  onChange={(e) => setBulkStart(e.target.value)}
+                  className="w-14 rounded-lg border border-purple-200 bg-white px-2 py-1 text-center text-xs font-semibold"
+                />
+                <span className="text-purple-400">to</span>
+                <input
+                  type="text"
+                  value={bulkEnd}
+                  onChange={(e) => setBulkEnd(e.target.value)}
+                  className="w-14 rounded-lg border border-purple-200 bg-white px-2 py-1 text-center text-xs font-semibold"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleApplyBulk}
+                className="rounded-lg bg-purple-600 hover:bg-purple-700 px-3 py-1 text-xs font-semibold text-white shadow-sm transition-colors"
+              >
+                Apply to all selected
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => handleSelectAll(true)}
+                className="font-medium text-purple-700 hover:text-purple-900 underline"
+              >
+                Select up to 15
+              </button>
+              <span className="text-purple-300">·</span>
+              <button
+                type="button"
+                onClick={() => handleSelectAll(false)}
+                className="font-medium text-purple-700 hover:text-purple-900 underline"
+              >
+                Clear selection
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Cap Warning */}
         {capWarning && (
-          <p role="alert" className="text-xs font-medium text-amber-700">
-            Free-tier cap: maximum {MAX_BATCH_ITEMS} clips per ZIP batch.
+          <div className="flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+            <span>Maximum 15 clips per batch to keep downloads fast and reliable.</span>
+          </div>
+        )}
+
+        {/* Video List */}
+        <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+          {rows.map((row, idx) => (
+            <div
+              key={row.id}
+              onClick={() => handleToggleRow(row.id)}
+              className={`flex items-center justify-between gap-3 rounded-2xl border p-3.5 cursor-pointer transition-all ${
+                row.selected
+                  ? 'border-purple-300 bg-purple-50/30 shadow-xs'
+                  : 'border-zinc-200/70 hover:border-zinc-300 bg-white'
+              }`}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  aria-label={row.selected ? 'Deselect clip' : 'Select clip'}
+                  className="text-purple-600 shrink-0"
+                >
+                  {row.selected ? (
+                    <CheckSquare className="h-5 w-5" />
+                  ) : (
+                    <Square className="h-5 w-5 text-zinc-300" />
+                  )}
+                </button>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="font-mono text-xs text-zinc-400 w-5">{idx + 1}.</span>
+                  <p className="text-xs sm:text-sm font-semibold text-zinc-900 truncate">
+                    {row.title}
+                  </p>
+                </div>
+              </div>
+
+              {/* Time inputs per row */}
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center gap-1.5 shrink-0"
+              >
+                <input
+                  type="text"
+                  value={row.start}
+                  onChange={(e) => {
+                    const next = rows.map((r) => (r.id === row.id ? { ...r, start: e.target.value } : r));
+                    setRows(next);
+                  }}
+                  className="w-14 rounded-lg border border-zinc-200 bg-zinc-50 px-1.5 py-1 text-center font-mono text-xs"
+                />
+                <span className="text-zinc-400 text-xs">-</span>
+                <input
+                  type="text"
+                  value={row.end}
+                  onChange={(e) => {
+                    const next = rows.map((r) => (r.id === row.id ? { ...r, end: e.target.value } : r));
+                    setRows(next);
+                  }}
+                  className="w-14 rounded-lg border border-zinc-200 bg-zinc-50 px-1.5 py-1 text-center font-mono text-xs"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Chai tip */}
+        {showChai && (
+          <div className="flex items-center justify-between rounded-2xl bg-amber-50 border border-amber-200 p-3.5 text-xs text-amber-900">
+            <div className="flex items-center gap-2">
+              <Coffee className="h-4 w-4 text-amber-700" />
+              <span>Enjoying downloading large batches? Consider buying the developer a chai!</span>
+            </div>
+            <a
+              href={CHAI_TIP_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="font-bold underline text-amber-950 hover:text-amber-800"
+            >
+              Tip a Chai ☕
+            </a>
+          </div>
+        )}
+
+        {/* Status or Error */}
+        {statusMsg && (
+          <p className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 font-medium">
+            {statusMsg}
           </p>
         )}
-      </div>
 
-      {/* Non-blocking $0.10 Chai Prompt (>5 clips) */}
-      {showChai && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50/70 px-6 py-3 text-xs">
-          <div className="flex items-center gap-2.5 text-zinc-800">
-            <Coffee className="h-4 w-4 text-amber-700 shrink-0" aria-hidden="true" />
-            <span>
-              Clipping {selectedRows.length} videos in one go — if ClipForge saves you a multi-GB download, chip in{' '}
-              <span className="font-semibold">$0.10 for a chai</span>. Never blocks your ZIP.
-            </span>
+        {apiError && (
+          <div className="rounded-xl bg-rose-50 border border-rose-200 p-3.5 text-xs text-rose-900 space-y-1">
+            <p className="font-semibold">{apiError.title}</p>
+            <p>{apiError.suggestion}</p>
           </div>
-          <a
-            href={CHAI_TIP_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-md border border-amber-300 bg-white px-3 py-1.5 font-medium text-amber-900 hover:bg-amber-100 whitespace-nowrap shrink-0"
-          >
-            Chip in $0.10
-          </a>
-        </div>
-      )}
-
-      {/* Alerts / ZIP download */}
-      {apiError && (
-        <div role="alert" className="border-b border-rose-200 bg-rose-50 px-6 py-3.5 text-xs space-y-1.5">
-          <p className="font-semibold text-rose-900">{apiError.title}</p>
-          <p className="text-rose-800">{apiError.suggestion}</p>
-          {apiError.needsBotBypass && (
-            <button
-              type="button"
-              onClick={onRequestOpenBotBypass}
-              className="font-medium text-rose-900 underline underline-offset-4"
-            >
-              Open Bot-Check Bypass panel
-            </button>
-          )}
-        </div>
-      )}
-
-      {statusMsg && (
-        <div className="flex items-center justify-between gap-4 border-b border-zinc-200 bg-zinc-50 px-6 py-3 text-xs text-zinc-700">
-          <span>{statusMsg}</span>
-          {zipDownload && (
-            <a
-              href={zipDownload.url}
-              download="clipforge_batch.zip"
-              className="font-medium text-rose-600 underline underline-offset-4 whitespace-nowrap"
-            >
-              Save clipforge_batch.zip ({formatBytes(zipDownload.size)})
-            </a>
-          )}
-        </div>
-      )}
-
-      {/* Matrix Table */}
-      <div className="overflow-x-auto">
-        {loadingMeta ? (
-          <div className="p-6 space-y-3">
-            {[0, 1, 2, 3].map((row) => (
-              <div key={row} className="h-10 w-full animate-pulse rounded bg-zinc-100" />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="px-6 py-10 text-center text-sm text-zinc-500">
-            No playlist items loaded yet. Ensure your backend URL is reachable in Backend Config and click Refresh
-            Metadata.
-          </div>
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
-              <tr>
-                <th className="w-12 px-6 py-3">Pick</th>
-                <th className="px-4 py-3">Video Title</th>
-                <th className="w-24 px-4 py-3 text-right">Length</th>
-                <th className="w-28 px-4 py-3">Start</th>
-                <th className="w-28 px-6 py-3">End</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {rows.map((row) => (
-                <tr key={row.id} className={row.selected ? 'bg-white' : 'bg-zinc-50/50 text-zinc-500'}>
-                  <td className="px-6 py-2.5">
-                    <input
-                      type="checkbox"
-                      checked={row.selected}
-                      onChange={() => handleToggleRow(row.id)}
-                      aria-label={`Select ${row.title}`}
-                      className="h-4 w-4 rounded border-zinc-300 accent-rose-600"
-                    />
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="font-medium text-zinc-900 line-clamp-1">{row.title}</div>
-                    <div className="font-mono text-xs text-zinc-400">{row.id}</div>
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600">
-                    {row.durationSec ? formatTimecode(row.durationSec) : '—'}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <input
-                      type="text"
-                      value={row.start}
-                      aria-label={`Start time for ${row.title}`}
-                      onChange={(e) => handleRowTime(row.id, 'start', e.target.value)}
-                      className="w-20 rounded border border-zinc-200 bg-white px-2 py-1 font-mono text-xs tabular-nums text-zinc-900"
-                    />
-                  </td>
-                  <td className="px-6 py-2.5">
-                    <input
-                      type="text"
-                      value={row.end}
-                      aria-label={`End time for ${row.title}`}
-                      onChange={(e) => handleRowTime(row.id, 'end', e.target.value)}
-                      className="w-20 rounded border border-zinc-200 bg-white px-2 py-1 font-mono text-xs tabular-nums text-zinc-900"
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         )}
+
+        {/* Download Batch Button */}
+        <motion.button
+          type="button"
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.99 }}
+          disabled={selectedCount === 0 || batchBusy}
+          onClick={handleDownloadBatch}
+          className="flex w-full items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 py-4 text-sm sm:text-base font-bold text-white shadow-lg shadow-purple-600/20 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Download className={`h-5 w-5 ${batchBusy ? 'animate-bounce' : ''}`} />
+          <span>
+            {batchBusy
+              ? 'Creating ZIP file...'
+              : `Download ${selectedCount} Selected Clips as ZIP`}
+          </span>
+        </motion.button>
       </div>
     </div>
   );

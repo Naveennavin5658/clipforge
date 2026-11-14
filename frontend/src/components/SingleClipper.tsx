@@ -1,11 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Download, Scissors } from 'lucide-react';
+import {
+  Download,
+  Scissors,
+  Sparkles,
+  Clock,
+  RotateCcw,
+  CheckCircle2,
+  AlertCircle,
+  HelpCircle,
+  Play,
+  Film,
+  Zap,
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   MAX_SINGLE_CLIP_SEC,
   classifyApiError,
   formatBytes,
   formatTimecode,
-  isLocalFileWasmRisk,
+  parseTimecode,
   validateClipRange,
   type BotBypassCredentials,
   type ClassifiedApiError,
@@ -68,22 +81,40 @@ export function SingleClipper({
 
   const maxCap = mode === 'local' ? null : MAX_SINGLE_CLIP_SEC;
   const rangeCheck = validateClipRange(startStr, endStr, maxCap);
-  const wasmMemoryWarning = mode === 'local' && localFile ? isLocalFileWasmRisk(localFile.size) : false;
 
-  const markIn = () => {
-    const current = videoRef.current ? Math.floor(videoRef.current.currentTime) : playheadSec;
-    setStartStr(formatTimecode(current));
+  // Time manipulation helpers
+  const adjustTime = (target: 'start' | 'end', deltaSeconds: number) => {
+    const current = target === 'start' ? parseTimecode(startStr) ?? 0 : parseTimecode(endStr) ?? 30;
+    const updated = Math.max(0, current + deltaSeconds);
+    if (target === 'start') {
+      setStartStr(formatTimecode(updated));
+    } else {
+      setEndStr(formatTimecode(updated));
+    }
   };
 
-  const markOut = () => {
-    const current = videoRef.current ? Math.floor(videoRef.current.currentTime) : playheadSec;
-    setEndStr(formatTimecode(Math.max(1, current)));
+  const setPresetDuration = (seconds: number) => {
+    const start = parseTimecode(startStr) ?? 0;
+    setEndStr(formatTimecode(start + seconds));
+  };
+
+  const pinCurrentTime = (target: 'start' | 'end') => {
+    let current = playheadSec;
+    if (videoRef.current) {
+      current = Math.floor(videoRef.current.currentTime);
+    }
+    if (target === 'start') {
+      setStartStr(formatTimecode(current));
+    } else {
+      setEndStr(formatTimecode(Math.max(current, 1)));
+    }
   };
 
   const handleExtract = async () => {
     if (!rangeCheck.valid) return;
     setApiError(null);
     setStatusMsg(null);
+    setLastClipUrl(null);
 
     if (mode === 'local' && localFile) {
       setBusy(true);
@@ -96,14 +127,19 @@ export function SingleClipper({
         });
         const downloadUrl = URL.createObjectURL(result.blob);
         setLastClipUrl({ url: downloadUrl, filename: result.filename });
-        setStatusMsg(`Ready (${formatBytes(result.blob.size)}) — trimmed 100% locally.`);
+        setStatusMsg(`Your clip is ready (${formatBytes(result.blob.size)})!`);
+        // Trigger download
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = result.filename;
+        a.click();
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Local ffmpeg.wasm trim failed.';
+        const message = err instanceof Error ? err.message : 'Local trimming failed.';
         setApiError({
           code: 'SERVER_ERROR',
-          title: 'Browser trim failed',
+          title: 'Could not trim this video',
           detail: message,
-          suggestion: 'Confirm the file uses a standard MP4/WebM codec and fits within browser WASM memory.',
+          suggestion: 'Please verify the video is a standard MP4, MOV, or WebM file.',
           needsBotBypass: false,
         });
       } finally {
@@ -115,12 +151,12 @@ export function SingleClipper({
     if (mode === 'youtube-single' && canonicalUrl) {
       const base = apiBaseUrl.trim().replace(/\/+$/, '');
       if (!base) {
-        setApiError(classifyApiError(0, 'No Backend Gateway URL configured.'));
+        setApiError(classifyApiError(0, 'Backend is not configured.'));
         return;
       }
 
       setBusy(true);
-      setStatusMsg('Requesting partial section extraction from backend...');
+      setStatusMsg('Connecting to video source...');
       try {
         const response = await fetch(`${base}/clip`, {
           method: 'POST',
@@ -137,20 +173,27 @@ export function SingleClipper({
         if (!response.ok) {
           const text = await response.text();
           setApiError(classifyApiError(response.status, text, response.headers.get('Retry-After')));
-          setStatusMsg(null);
           return;
         }
 
+        setStatusMsg('Downloading your clip...');
         const blob = await response.blob();
         const disposition = response.headers.get('Content-Disposition') || '';
-        const match = disposition.match(/filename="?([^"]+)"?/);
-        const filename = match?.[1] || `clipforge_${videoId || 'clip'}_${rangeCheck.startSec}-${rangeCheck.endSec}.mp4`;
+        const match = disposition.match(/filename="?([^";]+)"?/);
+        const filename = match ? match[1] : `clip_${Math.floor(rangeCheck.startSec)}-${Math.floor(rangeCheck.endSec)}.mp4`;
+
         const downloadUrl = URL.createObjectURL(blob);
         setLastClipUrl({ url: downloadUrl, filename });
-        setStatusMsg(`Extracted ${formatBytes(blob.size)} via partial download (-c copy).`);
+        setStatusMsg(`Your clip is ready (${formatBytes(blob.size)})!`);
+
+        // Trigger immediate browser download
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        a.click();
       } catch (err) {
-        setApiError(classifyApiError(0, err instanceof Error ? err.message : 'Network error'));
-        setStatusMsg(null);
+        const message = err instanceof Error ? err.message : 'Network error';
+        setApiError(classifyApiError(0, message));
       } finally {
         setBusy(false);
       }
@@ -158,196 +201,316 @@ export function SingleClipper({
   };
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
-      <div className="grid lg:grid-cols-12">
-        {/* Left: Video Preview */}
-        <div className="lg:col-span-7 bg-zinc-950 flex flex-col justify-between">
-          <div className="aspect-video w-full bg-zinc-950 flex items-center justify-center">
+    <div className="space-y-6">
+      <div className="grid gap-6 lg:grid-cols-12 items-start">
+        {/* Left Column: Video Preview */}
+        <div className="lg:col-span-7 space-y-4">
+          <div className="overflow-hidden rounded-3xl border border-zinc-200/90 bg-zinc-950 shadow-md">
             {mode === 'local' && localPreviewUrl ? (
               <video
                 ref={videoRef}
                 src={localPreviewUrl}
                 controls
-                onTimeUpdate={(e) => setPlayheadSec(Math.floor(e.currentTarget.currentTime))}
+                className="w-full aspect-video bg-black object-contain"
                 onLoadedMetadata={(e) => {
                   const dur = e.currentTarget.duration;
-                  if (Number.isFinite(dur)) {
-                    setLocalDuration(dur);
-                    setEndStr(formatTimecode(Math.min(Math.max(1, Math.floor(dur)), 30)));
+                  setLocalDuration(dur);
+                  if (dur && dur < 30) {
+                    setEndStr(formatTimecode(Math.floor(dur)));
                   }
                 }}
-                className="h-full w-full object-contain"
+                onTimeUpdate={(e) => setPlayheadSec(Math.floor(e.currentTarget.currentTime))}
               />
-            ) : mode === 'youtube-single' && videoId ? (
-              <iframe
-                title="YouTube video preview"
-                src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0`}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                className="h-full w-full border-0"
-              />
-            ) : null}
+            ) : videoId ? (
+              <div className="relative aspect-video w-full bg-zinc-900">
+                <iframe
+                  title="YouTube video preview"
+                  src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="absolute inset-0 h-full w-full border-0"
+                />
+              </div>
+            ) : (
+              <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 text-zinc-400">
+                <Film className="h-10 w-10 opacity-30" />
+                <p className="text-sm font-medium">No video loaded</p>
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 px-4 py-3 text-xs text-zinc-300">
-            <div className="flex items-center gap-2 font-mono tabular-nums">
-              {mode === 'local' && localFile ? (
-                <>
-                  <span className="truncate max-w-[220px] text-zinc-100">{localFile.name}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{formatBytes(localFile.size)}</span>
-                  {localDuration !== null && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span>{formatTimecode(localDuration)}</span>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  <span className="text-zinc-100">{videoId}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>1080p max · 180s cap</span>
-                </>
-              )}
-            </div>
-
-            {mode === 'local' && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={markIn}
-                  className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1 font-mono text-xs text-zinc-100 hover:border-zinc-500 whitespace-nowrap shrink-0"
-                >
-                  [I] Set Start ({formatTimecode(playheadSec)})
-                </button>
-                <button
-                  type="button"
-                  onClick={markOut}
-                  className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1 font-mono text-xs text-zinc-100 hover:border-zinc-500 whitespace-nowrap shrink-0"
-                >
-                  [O] Set End
-                </button>
-              </div>
+          {/* Quick instructions / tips */}
+          <div className="flex items-center justify-between text-xs text-zinc-500 px-1">
+            <span className="flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+              Adjust start &amp; end times below to trim your clip.
+            </span>
+            {localDuration && (
+              <span className="font-mono">Total length: {formatTimecode(localDuration)}</span>
             )}
           </div>
         </div>
 
-        {/* Right: Precision Controls */}
-        <div className="lg:col-span-5 p-6 flex flex-col justify-between gap-6 border-t lg:border-t-0 lg:border-l border-zinc-200">
-          <div className="space-y-5">
-            <div>
-              <h2 className="font-display text-lg font-semibold text-zinc-950">
-                {mode === 'local' ? 'Local Stream-Copy Trim' : 'Remote Section Extraction'}
-              </h2>
-              <p className="mt-1 text-xs leading-relaxed text-zinc-600">
-                {mode === 'local'
-                  ? 'Runs 100% in your browser via single-threaded ffmpeg.wasm (-c copy). Zero server upload.'
-                  : 'Downloads only the requested byte range via yt-dlp --download-sections + ffmpeg -c copy.'}
-              </p>
-            </div>
+        {/* Right Column: Time Picker & Actions */}
+        <div className="lg:col-span-5 space-y-5 rounded-3xl border border-zinc-200/80 bg-white p-6 shadow-sm">
+          <div>
+            <h2 className="font-display text-xl font-bold tracking-tight text-zinc-950">
+              Select Your Clip
+            </h2>
+            <p className="text-xs text-zinc-500 mt-1">
+              Choose the exact start and end moments for your video.
+            </p>
+          </div>
 
-            {wasmMemoryWarning && (
-              <div
-                role="alert"
-                className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
+          {/* Quick Duration Preset Pills */}
+          <div className="space-y-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+              Quick Length Presets
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setPresetDuration(15)}
+                className="flex items-center justify-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-50 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 py-2 text-xs font-semibold text-zinc-700 transition-colors"
               >
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700 mt-0.5" aria-hidden="true" />
-                <div>
-                  <span className="font-semibold">Large file (&gt;1.8 GB):</span> Browser WASM memory is capped at ~2 GB
-                  per tab. Trimming may fail on very large containers.
-                </div>
-              </div>
-            )}
+                <Zap className="h-3.5 w-3.5 text-rose-500" />
+                15s Story
+              </button>
+              <button
+                type="button"
+                onClick={() => setPresetDuration(30)}
+                className="flex items-center justify-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-50 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 py-2 text-xs font-semibold text-zinc-700 transition-colors"
+              >
+                <Clock className="h-3.5 w-3.5 text-amber-500" />
+                30s Short
+              </button>
+              <button
+                type="button"
+                onClick={() => setPresetDuration(60)}
+                className="flex items-center justify-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-50 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 py-2 text-xs font-semibold text-zinc-700 transition-colors"
+              >
+                <Film className="h-3.5 w-3.5 text-blue-500" />
+                60s Clip
+              </button>
+            </div>
+          </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="single-start-time" className="block text-xs font-medium text-zinc-700 mb-1.5">
-                  Start (MM:SS)
+          {/* Interactive Start / End Controls */}
+          <div className="space-y-4">
+            {/* Start Time Box */}
+            <div className="rounded-2xl border border-zinc-200/90 bg-zinc-50/60 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <label htmlFor="single-start-time" className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
+                  Start Moment
                 </label>
+                {mode === 'local' && (
+                  <button
+                    type="button"
+                    onClick={() => pinCurrentTime('start')}
+                    className="text-[11px] font-semibold text-rose-600 hover:text-rose-700 transition-colors"
+                  >
+                    📍 Use current video time
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
                 <input
                   id="single-start-time"
                   type="text"
                   value={startStr}
                   onChange={(e) => setStartStr(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 font-mono text-sm tabular-nums text-zinc-950 focus:border-zinc-950 focus:bg-white focus:outline-none"
+                  placeholder="00:00"
+                  className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-center font-mono text-base font-semibold text-zinc-950 focus:border-rose-500 focus:outline-none focus:ring-4 focus:ring-rose-500/10"
                 />
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => adjustTime('start', -5)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move back 5 seconds"
+                  >
+                    -5s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => adjustTime('start', -1)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move back 1 second"
+                  >
+                    -1s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => adjustTime('start', 1)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move forward 1 second"
+                  >
+                    +1s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => adjustTime('start', 5)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move forward 5 seconds"
+                  >
+                    +5s
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* End Time Box */}
+            <div className="rounded-2xl border border-zinc-200/90 bg-zinc-50/60 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <label htmlFor="single-end-time" className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                  <span className="flex h-2 w-2 rounded-full bg-rose-500" />
+                  End Moment
+                </label>
+                {mode === 'local' && (
+                  <button
+                    type="button"
+                    onClick={() => pinCurrentTime('end')}
+                    className="text-[11px] font-semibold text-rose-600 hover:text-rose-700 transition-colors"
+                  >
+                    📍 Use current video time
+                  </button>
+                )}
               </div>
 
-              <div>
-                <label htmlFor="single-end-time" className="block text-xs font-medium text-zinc-700 mb-1.5">
-                  End (MM:SS)
-                </label>
+              <div className="flex items-center gap-2">
                 <input
                   id="single-end-time"
                   type="text"
                   value={endStr}
                   onChange={(e) => setEndStr(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 font-mono text-sm tabular-nums text-zinc-950 focus:border-zinc-950 focus:bg-white focus:outline-none"
+                  placeholder="00:30"
+                  className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-center font-mono text-base font-semibold text-zinc-950 focus:border-rose-500 focus:outline-none focus:ring-4 focus:ring-rose-500/10"
                 />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-zinc-500 border-y border-zinc-100 py-2.5 font-mono tabular-nums">
-              <span>Clip duration</span>
-              <span className={rangeCheck.valid ? 'font-medium text-zinc-900' : 'font-medium text-rose-600'}>
-                {rangeCheck.valid ? `${rangeCheck.durationSec}s` : 'Invalid range'}
-                {mode === 'youtube-single' ? ` / ${MAX_SINGLE_CLIP_SEC}s max` : ''}
-              </span>
-            </div>
-
-            {!rangeCheck.valid && rangeCheck.error && (
-              <p role="alert" className="text-xs font-medium text-rose-600">
-                {rangeCheck.error}
-              </p>
-            )}
-
-            {statusMsg && (
-              <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700">
-                {statusMsg}
-              </p>
-            )}
-
-            {apiError && (
-              <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3.5 text-xs space-y-2">
-                <p className="font-semibold text-rose-900">{apiError.title}</p>
-                <p className="text-rose-800">{apiError.suggestion}</p>
-                {apiError.needsBotBypass && (
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={onRequestOpenBotBypass}
-                    className="font-medium text-rose-900 underline underline-offset-4 hover:text-rose-700"
+                    onClick={() => adjustTime('end', -5)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move back 5 seconds"
                   >
-                    Open Bot-Check Bypass panel
+                    -5s
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => adjustTime('end', -1)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move back 1 second"
+                  >
+                    -1s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => adjustTime('end', 1)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move forward 1 second"
+                  >
+                    +1s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => adjustTime('end', 5)}
+                    className="rounded-lg bg-zinc-200/70 hover:bg-zinc-200 px-2 py-2 text-xs font-mono font-medium text-zinc-700"
+                    title="Move forward 5 seconds"
+                  >
+                    +5s
+                  </button>
+                </div>
               </div>
-            )}
+            </div>
           </div>
 
-          <div className="space-y-2.5">
-            <button
+          {/* Clip Duration Summary Pill */}
+          <div className="flex items-center justify-between rounded-xl bg-zinc-100/80 px-4 py-2.5 text-xs">
+            <span className="text-zinc-600 font-medium">Selected Duration:</span>
+            <span
+              className={`font-mono text-sm font-bold ${
+                rangeCheck.valid ? 'text-zinc-950' : 'text-rose-600'
+              }`}
+            >
+              {rangeCheck.valid ? `${rangeCheck.durationSec} seconds` : 'Invalid time range'}
+            </span>
+          </div>
+
+          {/* Error / Validation Warning */}
+          {!rangeCheck.valid && rangeCheck.error && (
+            <div className="flex items-center gap-2 rounded-xl bg-rose-50 p-3 text-xs text-rose-700 border border-rose-200">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+              <span>{rangeCheck.error}</span>
+            </div>
+          )}
+
+          {/* Status Message */}
+          {statusMsg && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center gap-2.5 rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800"
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>{statusMsg}</span>
+            </motion.div>
+          )}
+
+          {/* Friendly Error Box */}
+          {apiError && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 space-y-2 text-xs text-rose-900"
+            >
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertCircle className="h-4 w-4 text-rose-600" />
+                <span>{apiError.title}</span>
+              </div>
+              <p className="text-rose-800 leading-relaxed">{apiError.suggestion}</p>
+              {apiError.needsBotBypass && (
+                <button
+                  type="button"
+                  onClick={onRequestOpenBotBypass}
+                  className="inline-flex items-center gap-1 font-semibold text-rose-700 underline underline-offset-4 hover:text-rose-900 pt-1"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                  Click here to add browser cookies for protected videos
+                </button>
+              )}
+            </motion.div>
+          )}
+
+          {/* Big Action Button */}
+          <div className="space-y-3 pt-1">
+            <motion.button
               type="button"
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.99 }}
               disabled={!rangeCheck.valid || busy}
               onClick={handleExtract}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
+              className="group relative flex w-full items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-600 px-6 py-4 text-sm sm:text-base font-bold text-white shadow-lg shadow-rose-600/20 transition-all disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Scissors className="h-4 w-4" aria-hidden="true" />
-              {busy
-                ? 'Processing...'
-                : mode === 'local'
-                  ? 'Trim Locally (Zero Upload)'
-                  : 'Extract Clip'}
-            </button>
+              <Scissors className={`h-5 w-5 transition-transform ${busy ? 'animate-spin' : 'group-hover:rotate-12'}`} />
+              <span>
+                {busy
+                  ? 'Cutting your clip...'
+                  : mode === 'local'
+                    ? 'Download Trimmed Video'
+                    : 'Download Clip (.mp4)'}
+              </span>
+            </motion.button>
 
             {lastClipUrl && (
               <a
                 href={lastClipUrl.url}
                 download={lastClipUrl.filename}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-900 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-zinc-800 whitespace-nowrap"
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white hover:bg-zinc-50 py-3 text-xs sm:text-sm font-semibold text-zinc-900 shadow-sm transition-colors"
               >
-                <Download className="h-4 w-4" aria-hidden="true" />
-                Save {lastClipUrl.filename}
+                <Download className="h-4 w-4 text-zinc-500" />
+                Download {lastClipUrl.filename} again
               </a>
             )}
           </div>
