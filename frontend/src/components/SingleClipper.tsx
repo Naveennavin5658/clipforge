@@ -51,6 +51,11 @@ export function SingleClipper({
   const [apiError, setApiError] = useState<ClassifiedApiError | null>(null);
   const [lastClipUrl, setLastClipUrl] = useState<{ url: string; filename: string } | null>(null);
 
+  const [startInput, setStartInput] = useState<string>('00:00');
+  const [endInput, setEndInput] = useState<string>(mode === 'local' ? '00:05' : '00:30');
+  const [isEditingStart, setIsEditingStart] = useState(false);
+  const [isEditingEnd, setIsEditingEnd] = useState(false);
+
   const localPreviewUrl = useMemo(() => {
     if (mode !== 'local' || !localFile) return null;
     return URL.createObjectURL(localFile);
@@ -73,8 +78,25 @@ export function SingleClipper({
     setStatusMsg(null);
     setLastClipUrl(null);
     setStartSec(0);
-    setEndSec(mode === 'local' ? 5 : 30);
+    const initialEnd = mode === 'local' ? 5 : 30;
+    setEndSec(initialEnd);
+    setStartInput('00:00');
+    setEndInput(formatTimecode(initialEnd));
+    setIsEditingStart(false);
+    setIsEditingEnd(false);
   }, [mode, videoId, localFile]);
+
+  useEffect(() => {
+    if (!isEditingStart) {
+      setStartInput(formatTimecode(startSec));
+    }
+  }, [startSec, isEditingStart]);
+
+  useEffect(() => {
+    if (!isEditingEnd) {
+      setEndInput(formatTimecode(endSec));
+    }
+  }, [endSec, isEditingEnd]);
 
   const maxCap = mode === 'local' ? null : MAX_SINGLE_CLIP_SEC;
   const startStr = formatTimecode(startSec);
@@ -119,6 +141,46 @@ export function SingleClipper({
   const setPresetDuration = (seconds: number) => {
     const capped = maxCap ? Math.min(seconds, maxCap) : seconds;
     setEndSec(startSec + capped);
+  };
+
+  const handleStartInputChange = (val: string) => {
+    setStartInput(val);
+    const parsed = parseTimecode(val);
+    if (parsed !== null && parsed >= 0 && parsed < endSec) {
+      setStartSec(parsed);
+    }
+  };
+
+  const handleStartInputBlur = () => {
+    setIsEditingStart(false);
+    const parsed = parseTimecode(startInput);
+    if (parsed !== null && parsed >= 0 && parsed < endSec) {
+      setStartSec(parsed);
+      setStartInput(formatTimecode(parsed));
+    } else {
+      setStartInput(formatTimecode(startSec));
+    }
+  };
+
+  const handleEndInputChange = (val: string) => {
+    setEndInput(val);
+    const parsed = parseTimecode(val);
+    if (parsed !== null && parsed > startSec) {
+      const nextEnd = maxCap && parsed - startSec > maxCap ? startSec + maxCap : parsed;
+      setEndSec(nextEnd);
+    }
+  };
+
+  const handleEndInputBlur = () => {
+    setIsEditingEnd(false);
+    const parsed = parseTimecode(endInput);
+    if (parsed !== null && parsed > startSec) {
+      const nextEnd = maxCap && parsed - startSec > maxCap ? startSec + maxCap : parsed;
+      setEndSec(nextEnd);
+      setEndInput(formatTimecode(nextEnd));
+    } else {
+      setEndInput(formatTimecode(endSec));
+    }
   };
 
   const handleExtract = async () => {
@@ -334,9 +396,19 @@ export function SingleClipper({
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex-1 rounded-xl bg-white dark:bg-black/50 border border-slate-300 dark:border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-slate-900 dark:text-white tracking-wider shadow-inner">
-                {startStr}
-              </div>
+              <input
+                type="text"
+                value={startInput}
+                onFocus={() => setIsEditingStart(true)}
+                onChange={(e) => handleStartInputChange(e.target.value)}
+                onBlur={handleStartInputBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                aria-label="Start time (e.g. 00:00 or seconds)"
+                title="Click to type exact time (e.g. 00:15 or 15)"
+                className="flex-1 min-w-0 rounded-xl bg-white dark:bg-black/50 border border-slate-300 dark:border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-slate-900 dark:text-white tracking-wider shadow-inner focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 transition-all cursor-text"
+              />
               <div className="flex items-center gap-1">
                 <button
                   type="button"
@@ -393,9 +465,19 @@ export function SingleClipper({
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex-1 rounded-xl bg-white dark:bg-black/50 border border-slate-300 dark:border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-slate-900 dark:text-white tracking-wider shadow-inner">
-                {endStr}
-              </div>
+              <input
+                type="text"
+                value={endInput}
+                onFocus={() => setIsEditingEnd(true)}
+                onChange={(e) => handleEndInputChange(e.target.value)}
+                onBlur={handleEndInputBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                aria-label="End time (e.g. 00:30 or seconds)"
+                title="Click to type exact time (e.g. 01:20 or 80)"
+                className="flex-1 min-w-0 rounded-xl bg-white dark:bg-black/50 border border-slate-300 dark:border-zinc-800 px-3 py-2 text-center font-mono text-xl font-bold text-slate-900 dark:text-white tracking-wider shadow-inner focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-500/20 transition-all cursor-text"
+              />
               <div className="flex items-center gap-1">
                 <button
                   type="button"
