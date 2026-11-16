@@ -110,15 +110,19 @@ export function SingleClipper({
 
   const adjustTime = (target: 'start' | 'end', delta: number) => {
     if (target === 'start') {
-      const next = Math.max(0, Math.min(startSec + delta, endSec - 1));
+      const next = Math.max(0, startSec + delta);
       setStartSec(next);
-    } else {
-      const next = Math.max(startSec + 1, endSec + delta);
-      if (maxCap && next - startSec > maxCap) {
-        setEndSec(startSec + maxCap);
-      } else {
-        setEndSec(next);
+      if (next >= endSec) {
+        const nextEnd = next + (mode === 'local' ? 5 : 30);
+        setEndSec(nextEnd);
+        setEndInput(formatTimecode(nextEnd));
+        setTotalDuration((prev) => Math.max(prev, nextEnd + 60));
       }
+    } else {
+      const next = Math.max(0, endSec + delta);
+      setEndSec(next);
+      setEndInput(formatTimecode(next));
+      setTotalDuration((prev) => Math.max(prev, next + 60));
     }
   };
 
@@ -126,37 +130,58 @@ export function SingleClipper({
     if (!videoRef.current) return;
     const current = Math.floor(videoRef.current.currentTime);
     if (target === 'start') {
-      if (current < endSec) setStartSec(current);
-    } else {
-      if (current > startSec) {
-        if (maxCap && current - startSec > maxCap) {
-          setEndSec(startSec + maxCap);
-        } else {
-          setEndSec(current);
-        }
+      setStartSec(current);
+      if (current >= endSec) {
+        const nextEnd = current + (mode === 'local' ? 5 : 30);
+        setEndSec(nextEnd);
+        setEndInput(formatTimecode(nextEnd));
+        setTotalDuration((prev) => Math.max(prev, nextEnd + 60));
       }
+    } else {
+      setEndSec(current);
+      setEndInput(formatTimecode(current));
+      setTotalDuration((prev) => Math.max(prev, current + 60));
     }
   };
 
   const setPresetDuration = (seconds: number) => {
     const capped = maxCap ? Math.min(seconds, maxCap) : seconds;
-    setEndSec(startSec + capped);
+    const nextEnd = startSec + capped;
+    setEndSec(nextEnd);
+    setEndInput(formatTimecode(nextEnd));
+    setTotalDuration((prev) => Math.max(prev, nextEnd + 60));
   };
 
   const handleStartInputChange = (val: string) => {
     setStartInput(val);
     const parsed = parseTimecode(val);
-    if (parsed !== null && parsed >= 0 && parsed < endSec) {
+    if (parsed !== null && parsed >= 0) {
       setStartSec(parsed);
+      if (parsed >= endSec) {
+        const nextEnd = parsed + (mode === 'local' ? 5 : 30);
+        setEndSec(nextEnd);
+        setEndInput(formatTimecode(nextEnd));
+        setTotalDuration((prev) => Math.max(prev, nextEnd + 60));
+      } else {
+        setTotalDuration((prev) => Math.max(prev, endSec + 60));
+      }
     }
   };
 
   const handleStartInputBlur = () => {
     setIsEditingStart(false);
     const parsed = parseTimecode(startInput);
-    if (parsed !== null && parsed >= 0 && parsed < endSec) {
+    if (parsed !== null && parsed >= 0) {
       setStartSec(parsed);
       setStartInput(formatTimecode(parsed));
+      if (parsed >= endSec) {
+        const nextEnd = parsed + (mode === 'local' ? 5 : 30);
+        setEndSec(nextEnd);
+        setEndInput(formatTimecode(nextEnd));
+        setTotalDuration((prev) => Math.max(prev, nextEnd + 60));
+      } else {
+        setTotalDuration((prev) => Math.max(prev, endSec + 60));
+      }
     } else {
       setStartInput(formatTimecode(startSec));
     }
@@ -165,19 +190,19 @@ export function SingleClipper({
   const handleEndInputChange = (val: string) => {
     setEndInput(val);
     const parsed = parseTimecode(val);
-    if (parsed !== null && parsed > startSec) {
-      const nextEnd = maxCap && parsed - startSec > maxCap ? startSec + maxCap : parsed;
-      setEndSec(nextEnd);
+    if (parsed !== null && parsed >= 0) {
+      setEndSec(parsed);
+      setTotalDuration((prev) => Math.max(prev, parsed + 60));
     }
   };
 
   const handleEndInputBlur = () => {
     setIsEditingEnd(false);
     const parsed = parseTimecode(endInput);
-    if (parsed !== null && parsed > startSec) {
-      const nextEnd = maxCap && parsed - startSec > maxCap ? startSec + maxCap : parsed;
-      setEndSec(nextEnd);
-      setEndInput(formatTimecode(nextEnd));
+    if (parsed !== null && parsed >= 0) {
+      setEndSec(parsed);
+      setEndInput(formatTimecode(parsed));
+      setTotalDuration((prev) => Math.max(prev, parsed + 60));
     } else {
       setEndInput(formatTimecode(endSec));
     }
@@ -368,7 +393,7 @@ export function SingleClipper({
           <FilmstripScrubber
             startSec={startSec}
             endSec={endSec}
-            durationSec={totalDuration}
+            durationSec={Math.max(totalDuration, endSec + 60, startSec + 120)}
             playheadSec={playheadSec}
             onChange={handleScrubberChange}
             maxCapSec={maxCap}
